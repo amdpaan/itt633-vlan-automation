@@ -78,7 +78,9 @@ Processing order: SW1, then SW2, then SW3, one switch at a time (apply, verify, 
 | `vlan 30` + `name Guest` (VLAN did not exist) | `no vlan 30` |
 | `switchport trunk allowed vlan add 30` | `switchport trunk allowed vlan remove 30` |
 | Access port that had no config before | `default interface Ethernet0/3` |
-| Access port that already had settings | re-apply the port's old lines from `show running-config interface <port>` captured in step 3 |
+| Access port that already had settings | `default interface <port>`, then `interface <port>` and re-apply the port's old lines from `show running-config interface <port>` captured in step 3 (resetting first removes the tool's new lines, such as `switchport mode access`) |
+
+The undo list runs in reverse order of the changes (last change undone first): access ports, then trunks, then VLANs, so no port is left in a VLAN that is being deleted.
 
 Known limitation to keep honest in the report: the undo list only reverses what the tool recorded. The backup exists for manual restore. Cisco `configure replace` (Method B) is a stretch goal only if the image supports it; do not present it as the plan.
 
@@ -86,6 +88,7 @@ Known limitation to keep honest in the report: the undo list only reverses what 
 
 - Trunk changes always use `switchport trunk allowed vlan add` / `remove`. Never send `switchport trunk allowed vlan <list>` without `add`/`remove`, because it replaces the list and drops VLAN 99.
 - Never create, delete, remove or modify VLAN 99, the SVIs, the trunk mode of the inter-switch links, or SW1 Ethernet1/0. Validate plan.yaml at load time and refuse a plan that touches them.
+- VLAN names in plan.yaml must be 1 to 32 characters with no spaces (keeps parsing `show vlan brief` simple). `validate_plan()` enforces this.
 - Never `write memory` before verification passes.
 - Never store passwords in files or Git. Ask with `getpass` at run time (an environment variable is acceptable as an option). Add `backups/`, `reports/`, `logs/` and any `.env` to `.gitignore`.
 
@@ -127,6 +130,7 @@ itt633-vlan-automation/
   plan.yaml
   vlan_tool.py         # main script: CLI and the nine steps
   parsers.py           # functions that turn show output into Python data
+  planning.py          # plan validation and build_changes() (commands + undo list); no Netmiko, testable on the Mac
   tests/
     samples/           # real show outputs saved from the IOL-L2 switches
     test_parsers.py

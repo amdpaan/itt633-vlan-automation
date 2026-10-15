@@ -1,0 +1,6 @@
+Building configuration...
+
+Current configuration : 31 bytes
+!
+interface Ethernet0/3
+end

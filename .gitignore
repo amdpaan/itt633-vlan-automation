@@ -1,0 +1,17 @@
+# Output from the tool (may contain switch configs, never commit)
+backups/
+reports/
+logs/
+
+# Secrets
+.env
+*.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store

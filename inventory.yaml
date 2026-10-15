@@ -1,0 +1,5 @@
+# Switches the tool connects to (management IPs on VLAN 99).
+# Username and password are NOT stored here; the tool asks at run time.
+SW1: {host: 192.168.99.11, device_type: cisco_ios}
+SW2: {host: 192.168.99.12, device_type: cisco_ios}
+SW3: {host: 192.168.99.13, device_type: cisco_ios}
