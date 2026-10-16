@@ -4,7 +4,7 @@ Read this file before writing or changing any code in this repository.
 
 ## What this project is
 
-A university group project (ITT633, FSKM, UiTM Shah Alam, semester September 2026 to January 2027, lecturer Kamarul Ariffin bin Abdul Basit). Group of 4 students. The leader and the roles are not decided yet, so do not assign names to tasks.
+A university group project (ITT633, FSKM, UiTM Shah Alam, semester September 2026 to January 2027, lecturer Kamarul Ariffin bin Abdul Basit). Group of 4 students (see the Team table in README.md). The group leader is Muhammad Afiq bin Khairul Anuar; the other roles are not decided yet, so do not assign names to tasks. Record each member's work in CONTRIBUTIONS.md.
 
 The project builds a Python tool that deploys VLAN configuration to three Cisco switches from one YAML file, verifies the result against the file, saves only when every check passes, and rolls back its own changes when a check fails.
 
