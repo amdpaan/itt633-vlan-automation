@@ -31,7 +31,7 @@ Each member's work is recorded in [CONTRIBUTIONS.md](CONTRIBUTIONS.md).
 - [ ] Proposal approved by lecturer
 - [ ] GNS3 + Cisco IOSvL2 lab working
 - [x] Switched lab image to Cisco IOSvL2 15.2 (GigabitEthernet0/x names, VTP transparent)
-- [x] Pre-check, local backup, change list and `--dry-run` (32 pytest tests with fake switches, not yet tested in GNS3)
+- [x] Pre-check, local backup, change list and `--dry-run` (33 pytest tests, fake switches, not yet tested in GNS3)
 - [ ] Flash backup copy, apply, verify, rollback, report.json
 - [ ] Test cases TC01–TC11 run with evidence
 

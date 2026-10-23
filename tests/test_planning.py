@@ -143,3 +143,22 @@ def test_refuses_access_port_in_vlan_99():
     vlans[99]["ports"].append("GigabitEthernet0/3")
     with pytest.raises(ValueError, match="VLAN 99"):
         build_changes("SW1", PLAN, vlans, trunks, ports)
+
+
+def test_every_switch_gets_all_vlans():
+    """VTP transparent: each switch needs its own VLANs, including SW1 (the core)."""
+    samples = {
+        "SW1": ("sw1_show_vlan_brief_baseline.txt", "sw1_show_interfaces_trunk_baseline.txt"),
+        "SW2": ("sw2_show_vlan_brief_baseline.txt", "sw2_show_interfaces_trunk_baseline.txt"),
+        # SW3's baseline is set up like SW2's (trunk on Gi0/0, no host port)
+        "SW3": ("sw2_show_vlan_brief_baseline.txt", "sw2_show_interfaces_trunk_baseline.txt"),
+    }
+    for switch, (vlan_file, trunk_file) in samples.items():
+        vlans = parse_vlan_brief(read_sample(vlan_file))
+        trunks = parse_trunk_allowed(read_sample(trunk_file))
+        ports = {port: [] for port in PLAN["switches"][switch]["access"]}
+        commands, undo = build_changes(switch, PLAN, vlans, trunks, ports)
+        for vlan_id, name in [(10, "Sales"), (20, "IT"), (30, "Guest")]:
+            assert "vlan %d" % vlan_id in commands, switch
+            assert "name %s" % name in commands, switch
+            assert "no vlan %d" % vlan_id in undo, switch
