@@ -1,8 +1,8 @@
 # Sample show output
 
-**NOT YET VERIFIED ON IOL-L2.** Every file here was written by hand from
+**NOT YET VERIFIED ON IOSvL2.** Every file here was written by hand from
 typical Cisco IOS output, not captured from our switches. Spacing and
-wording on IOL-L2 may be different.
+wording on IOSvL2 may be different.
 
 To do in GNS3 (week 2-3): run each command on the real switches, paste the
 output into a file named `<switch>_<command>.txt` (for example

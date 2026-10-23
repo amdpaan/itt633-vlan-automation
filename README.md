@@ -8,7 +8,7 @@ and undoes its own changes if a check fails.
 
 > **Status:** early skeleton. The parsing and planning code is tested with
 > pytest on hand-written sample output. **Nothing has been tested on the
-> IOL-L2 switches in GNS3 yet.**
+> IOSvL2 switches in GNS3 yet.**
 
 ## Team
 
@@ -26,11 +26,13 @@ Each member's work is recorded in [CONTRIBUTIONS.md](CONTRIBUTIONS.md).
 
 ## Project status
 
-- [x] Repo skeleton, parsers, planning module, 24 pytest tests (sample data only, not yet tested on IOL-L2)
+- [x] Repo skeleton, parsers, planning module, 24 pytest tests (sample data only, not yet tested on IOSvL2)
 - [x] Proposal v6 drafted (cover alignment fixed)
 - [ ] Proposal approved by lecturer
-- [ ] GNS3 + Cisco IOL-L2 lab working
-- [ ] Pre-check, backup, apply, verify, rollback, report.json
+- [ ] GNS3 + Cisco IOSvL2 lab working
+- [x] Switched lab image to Cisco IOSvL2 15.2 (GigabitEthernet0/x names, VTP transparent)
+- [x] Pre-check, local backup, change list and `--dry-run` (32 pytest tests with fake switches, not yet tested in GNS3)
+- [ ] Flash backup copy, apply, verify, rollback, report.json
 - [ ] Test cases TC01–TC11 run with evidence
 
 ## Files
@@ -42,7 +44,7 @@ Each member's work is recorded in [CONTRIBUTIONS.md](CONTRIBUTIONS.md).
 | `parsers.py` | Turns `show` output text into Python data |
 | `planning.py` | Checks the plan for safety and builds the commands + undo list |
 | `vlan_tool.py` | Main script (command line, talks to the switches) |
-| `tests/` | pytest tests and sample `show` output |
+| `tests/` | pytest tests, sample `show` output, and fake switches for vlan_tool.py |
 
 ## Setup (Mac, Windows or Linux)
 
@@ -67,5 +69,5 @@ python vlan_tool.py --plan plan.yaml --inventory inventory.yaml --dry-run
 The username and password are asked at run time and are never saved to a file.
 
 Before running, the manual baseline must be in place on all three switches
-(hostname, VLAN 99 and SVI, local user, SSH, trunks allowing VLAN 99, and
-SW1 Ethernet1/0 in VLAN 99). The tool never changes these.
+(hostname, `vtp mode transparent`, VLAN 99 and SVI, local user with privilege 15, SSH, trunks allowing VLAN 99, and
+SW1 GigabitEthernet1/0 in VLAN 99). The tool never changes these.

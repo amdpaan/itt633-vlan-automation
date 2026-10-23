@@ -1,19 +1,19 @@
 # The intended VLAN state. The tool adds whatever is missing.
-# Do NOT list VLAN 99, the SVIs, or SW1 Ethernet1/0 here: they belong to the
+# Do NOT list VLAN 99, the SVIs, or SW1 GigabitEthernet1/0 here: they belong to the
 # manual baseline and the tool refuses a plan that touches them.
-# Interface names are for IOL-L2. If the group moves to IOSvL2, change
-# Ethernet0/x to GigabitEthernet0/x here (and only here).
+# Interface names are for Cisco IOSvL2 15.2 (GigabitEthernet0/x).
+# If the image changes, update the names here and PROTECTED_PORTS in planning.py.
 vlans:
   - {id: 10, name: Sales}
   - {id: 20, name: IT}
   - {id: 30, name: Guest}
 switches:
   SW1:
-    access: {Ethernet0/3: 30}
-    trunks: {Ethernet0/1: [10, 20, 30], Ethernet0/2: [10, 20, 30]}
+    access: {GigabitEthernet0/3: 30}
+    trunks: {GigabitEthernet0/1: [10, 20, 30], GigabitEthernet0/2: [10, 20, 30]}
   SW2:
-    access: {Ethernet0/1: 10, Ethernet0/2: 20}
-    trunks: {Ethernet0/0: [10, 20, 30]}
+    access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 20}
+    trunks: {GigabitEthernet0/0: [10, 20, 30]}
   SW3:
-    access: {Ethernet0/1: 10, Ethernet0/2: 20, Ethernet0/3: 30}
-    trunks: {Ethernet0/0: [10, 20, 30]}
+    access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 20, GigabitEthernet0/3: 30}
+    trunks: {GigabitEthernet0/0: [10, 20, 30]}

@@ -1,9 +1,9 @@
 """Turn Cisco "show" output (plain text) into Python data.
 
-STATUS: NOT YET VERIFIED ON IOL-L2.
+STATUS: NOT YET VERIFIED ON IOSvL2.
 These parsers were written against typical Cisco IOS output. The sample
 files in tests/samples/ are hand-written, not captured from our switches.
-Before trusting them, save real output from the IOL-L2 switches into
+Before trusting them, save real output from the IOSvL2 switches into
 tests/samples/ and re-run pytest.
 
 Nothing in this file talks to a switch, so it can be tested on the Mac.
@@ -20,7 +20,7 @@ SHORT_NAMES = {
 
 
 def full_interface_name(name):
-    """Turn a short name like 'Et0/1' into 'Ethernet0/1'.
+    """Turn a short name like 'Gi0/1' into 'GigabitEthernet0/1'.
 
     Names that are already full (or unknown) are returned unchanged.
     """
@@ -54,8 +54,8 @@ def parse_vlan_brief(output):
     """Parse 'show vlan brief'.
 
     Returns a dict keyed by VLAN id, for example:
-        {1: {"name": "default", "ports": ["Ethernet0/3"]},
-         99: {"name": "Management", "ports": ["Ethernet1/0"]}}
+        {1: {"name": "default", "ports": ["GigabitEthernet0/3"]},
+         99: {"name": "Management", "ports": ["GigabitEthernet1/0"]}}
     """
     vlans = {}
     last_id = None
@@ -78,7 +78,7 @@ def parse_vlan_brief(output):
 
 
 def _split_ports(text):
-    """Turn 'Et0/1, Et0/2' into ['Ethernet0/1', 'Ethernet0/2']."""
+    """Turn 'Gi0/1, Gi0/2' into ['GigabitEthernet0/1', 'GigabitEthernet0/2']."""
     return [full_interface_name(p) for p in text.split(",") if p.strip()]
 
 
@@ -86,7 +86,7 @@ def parse_trunk_allowed(output):
     """Parse 'show interfaces trunk' and return the allowed VLANs per trunk.
 
     Only the 'Vlans allowed on trunk' section is read. Example result:
-        {"Ethernet0/1": [99], "Ethernet0/2": [99]}
+        {"GigabitEthernet0/1": [99], "GigabitEthernet0/2": [99]}
     A port that is not in the result is not an active trunk.
     """
     trunks = {}

@@ -23,7 +23,7 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 
 - Development: the user writes code on an **Apple Silicon Mac** and shares it with the group through Git/GitHub. Check arm64 compatibility before suggesting any tool.
 - Lab: GNS3 (2.2.x) with the GNS3 VM, running on a Windows PC or the faculty lab computers. Cisco x86 images do not run well on Apple Silicon.
-- Switch image: Cisco **IOL-L2** in GNS3 (not confirmed working yet). Interface names are `Ethernet0/0`, `Ethernet0/1`, and so on. If the group switches to IOSvL2, names become `GigabitEthernet0/x`; only plan.yaml should need to change.
+- Switch image: Cisco **IOSvL2 15.2** in GNS3 (replaced IOL-L2; not confirmed working yet). Interface names are `GigabitEthernet0/0`, `GigabitEthernet0/1`, and so on (short form `Gi0/x` in show output). Old IOL-L2 names map as e0/0->Gi0/0, e0/1->Gi0/1, e0/2->Gi0/2, e0/3->Gi0/3, e1/0->Gi1/0. If the image changes again, only plan.yaml and `PROTECTED_PORTS` in planning.py should need to change.
 - End hosts: VPCS. The automation host joins VLAN 99 through a GNS3 Cloud node (method still to be tested, for example a Windows loopback adapter).
 - **Nothing has been tested on a real Cisco image yet.** Never claim that code or commands work on the switches. Say what still needs testing in GNS3.
 
@@ -41,21 +41,21 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 | SW1 (core, Level 1) | SVI vlan 99 | 99 | 192.168.99.11 |
 | SW2 (access, Level 2) | SVI vlan 99 | 99 | 192.168.99.12 |
 | SW3 (access, Level 3) | SVI vlan 99 | 99 | 192.168.99.13 |
-| Automation host | SW1 Ethernet1/0 | 99 | 192.168.99.100 |
-| PC1 Sales | SW2 Ethernet0/1 | 10 | 192.168.10.10 |
-| PC2 Sales | SW3 Ethernet0/1 | 10 | 192.168.10.11 |
-| PC3 IT | SW2 Ethernet0/2 | 20 | 192.168.20.10 |
-| PC4 IT | SW3 Ethernet0/2 | 20 | 192.168.20.11 |
-| PC5 Guest | SW1 Ethernet0/3 | 30 | 192.168.30.10 |
-| PC6 Guest | SW3 Ethernet0/3 | 30 | 192.168.30.11 |
+| Automation host | SW1 GigabitEthernet1/0 | 99 | 192.168.99.100 |
+| PC1 Sales | SW2 GigabitEthernet0/1 | 10 | 192.168.10.10 |
+| PC2 Sales | SW3 GigabitEthernet0/1 | 10 | 192.168.10.11 |
+| PC3 IT | SW2 GigabitEthernet0/2 | 20 | 192.168.20.10 |
+| PC4 IT | SW3 GigabitEthernet0/2 | 20 | 192.168.20.11 |
+| PC5 Guest | SW1 GigabitEthernet0/3 | 30 | 192.168.30.10 |
+| PC6 Guest | SW3 GigabitEthernet0/3 | 30 | 192.168.30.11 |
 
-Trunks (802.1Q): SW1 Ethernet0/1 to SW2 Ethernet0/0, and SW1 Ethernet0/2 to SW3 Ethernet0/0. The final allowed list is 10, 20, 30, 99.
+Trunks (802.1Q): SW1 GigabitEthernet0/1 to SW2 GigabitEthernet0/0, and SW1 GigabitEthernet0/2 to SW3 GigabitEthernet0/0. The final allowed list is 10, 20, 30, 99.
 
 There is **no router**. Pings between different VLANs must fail; that proves isolation.
 
 ### Manual baseline (done by hand before the tool runs)
 
-Hostname, VLAN 99 and its SVI address, local user, SSH, both trunk links (mode trunk, allowed VLAN 99), and the host port SW1 Ethernet1/0 in VLAN 99. The tool reaches SW2 and SW3 through these trunks, so **the tool must never break them**.
+Hostname, `vtp mode transparent`, VLAN 99 and its SVI address, local user (privilege 15, so the tool lands in enable mode), SSH, both trunk links (mode trunk, allowed VLAN 99), and the host port SW1 GigabitEthernet1/0 in VLAN 99. The tool reaches SW2 and SW3 through these trunks, so **the tool must never break them**. VTP transparent mode means each switch keeps its own VLAN list (no VTP sync between switches), so the tool must create the VLANs on every switch, and VLANs are stored in the running config.
 
 ## What the tool does (core scope)
 
@@ -77,7 +77,7 @@ Processing order: SW1, then SW2, then SW3, one switch at a time (apply, verify, 
 |---|---|
 | `vlan 30` + `name Guest` (VLAN did not exist) | `no vlan 30` |
 | `switchport trunk allowed vlan add 30` | `switchport trunk allowed vlan remove 30` |
-| Access port that had no config before | `default interface Ethernet0/3` |
+| Access port that had no config before | `default interface GigabitEthernet0/3` |
 | Access port that already had settings | `default interface <port>`, then `interface <port>` and re-apply the port's old lines from `show running-config interface <port>` captured in step 3 (resetting first removes the tool's new lines, such as `switchport mode access`) |
 
 The undo list runs in reverse order of the changes (last change undone first): access ports, then trunks, then VLANs, so no port is left in a VLAN that is being deleted.
@@ -87,7 +87,7 @@ Known limitation to keep honest in the report: the undo list only reverses what 
 ### Safety rules (must hold in all code)
 
 - Trunk changes always use `switchport trunk allowed vlan add` / `remove`. Never send `switchport trunk allowed vlan <list>` without `add`/`remove`, because it replaces the list and drops VLAN 99.
-- Never create, delete, remove or modify VLAN 99, the SVIs, the trunk mode of the inter-switch links, or SW1 Ethernet1/0. Validate plan.yaml at load time and refuse a plan that touches them.
+- Never create, delete, remove or modify VLAN 99, the SVIs, the trunk mode of the inter-switch links, or SW1 GigabitEthernet1/0. Validate plan.yaml at load time and refuse a plan that touches them.
 - VLAN names in plan.yaml must be 1 to 32 characters with no spaces (keeps parsing `show vlan brief` simple). `validate_plan()` enforces this.
 - Never `write memory` before verification passes.
 - Never store passwords in files or Git. Ask with `getpass` at run time (an environment variable is acceptable as an option). Add `backups/`, `reports/`, `logs/` and any `.env` to `.gitignore`.
@@ -109,14 +109,14 @@ vlans:
   - {id: 30, name: Guest}
 switches:
   SW1:
-    access: {Ethernet0/3: 30}
-    trunks: {Ethernet0/1: [10, 20, 30], Ethernet0/2: [10, 20, 30]}
+    access: {GigabitEthernet0/3: 30}
+    trunks: {GigabitEthernet0/1: [10, 20, 30], GigabitEthernet0/2: [10, 20, 30]}
   SW2:
-    access: {Ethernet0/1: 10, Ethernet0/2: 20}
-    trunks: {Ethernet0/0: [10, 20, 30]}
+    access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 20}
+    trunks: {GigabitEthernet0/0: [10, 20, 30]}
   SW3:
-    access: {Ethernet0/1: 10, Ethernet0/2: 20, Ethernet0/3: 30}
-    trunks: {Ethernet0/0: [10, 20, 30]}
+    access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 20, GigabitEthernet0/3: 30}
+    trunks: {GigabitEthernet0/0: [10, 20, 30]}
 ```
 
 ## Suggested repository layout
@@ -132,9 +132,10 @@ itt633-vlan-automation/
   parsers.py           # functions that turn show output into Python data
   planning.py          # plan validation and build_changes() (commands + undo list); no Netmiko, testable on the Mac
   tests/
-    samples/           # real show outputs saved from the IOL-L2 switches
+    samples/           # real show outputs saved from the IOSvL2 switches
     test_parsers.py
     test_planning.py
+    test_vlan_tool.py  # vlan_tool.py steps with fake Netmiko connections
   backups/  reports/  logs/   # git-ignored
 ```
 
@@ -143,7 +144,7 @@ Command line: `python vlan_tool.py --plan plan.yaml --inventory inventory.yaml [
 ## Testing approach
 
 - Parsing and planning logic must be testable on the Mac without switches: keep functions that talk to Netmiko separate from functions that parse text and build command lists, and test the pure functions with pytest.
-- Output formats differ between images. Before trusting a parser, save real output from the IOL-L2 switches into `tests/samples/` and test against it. Until then, mark parsers as unverified.
+- Output formats differ between images. Before trusting a parser, save real output from the IOSvL2 switches into `tests/samples/` and test against it. Until then, mark parsers as unverified.
 - Network test cases from the proposal (each needs evidence in the report: screenshot or saved output, named by test ID):
 
 | ID | What | Expected |
@@ -151,7 +152,7 @@ Command line: `python vlan_tool.py --plan plan.yaml --inventory inventory.yaml [
 | TC01 | Pre-check on SW1 to SW3 | All reachable over SSH |
 | TC02 | `--dry-run` then `show vlan brief` | Commands printed, nothing changed |
 | TC03 | `show vlan brief` after run | VLANs 10, 20, 30, 99 with correct names |
-| TC04 | `show interfaces Ethernet0/x switchport` | Each PC port in its planned VLAN |
+| TC04 | `show interfaces GigabitEthernet0/x switchport` | Each PC port in its planned VLAN |
 | TC05 | `show interfaces trunk` | Both trunks allow 10, 20, 30, 99 |
 | TC06 | Ping PC1 to PC2, PC3 to PC4, PC5 to PC6 | All succeed |
 | TC07 | Ping PC1 to PC3, PC1 to PC5, PC3 to PC6 | All fail |

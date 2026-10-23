@@ -1,11 +1,11 @@
 VLAN Name                             Status    Ports
 ---- -------------------------------- --------- -------------------------------
-1    default                          active    Et1/1, Et1/2, Et1/3, Et2/0
-                                                Et2/1, Et2/2, Et2/3
+1    default                          active    Gi1/1, Gi1/2, Gi1/3, Gi2/0
+                                                Gi2/1, Gi2/2, Gi2/3
 10   Sales                            active    
 20   IT                               active    
-30   Guest                            active    Et0/3
-99   Management                       active    Et1/0
+30   Guest                            active    Gi0/3
+99   Management                       active    Gi1/0
 1002 fddi-default                     act/unsup 
 1003 token-ring-default               act/unsup 
 1004 fddinet-default                  act/unsup 

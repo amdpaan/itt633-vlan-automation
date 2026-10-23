@@ -10,8 +10,8 @@ import yaml
 # VLANs and ports the tool must never touch (manual baseline).
 MANAGEMENT_VLAN = 99
 RESERVED_VLANS = [1, 1002, 1003, 1004, 1005]  # Cisco built-in VLANs
-# The automation host port. If the image changes, update this name too.
-PROTECTED_PORTS = {"SW1": ["Ethernet1/0"]}
+# The automation host port (IOSvL2 name). If the image changes, update this name too.
+PROTECTED_PORTS = {"SW1": ["GigabitEthernet1/0"]}
 
 
 def load_yaml(path):

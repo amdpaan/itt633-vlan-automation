@@ -1,4 +1,4 @@
-Name: Et0/3
+Name: Gi0/3
 Switchport: Enabled
 Administrative Mode: static access
 Operational Mode: static access
