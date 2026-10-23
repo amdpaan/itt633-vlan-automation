@@ -15,7 +15,11 @@ import os
 import sys
 from datetime import datetime
 
-from netmiko import ConnectHandler, NetmikoAuthenticationException, NetmikoTimeoutException
+from netmiko import (
+    ConnectHandler,
+    NetmikoAuthenticationException,
+    NetmikoTimeoutException,
+)
 
 from parsers import parse_interface_config, parse_trunk_allowed, parse_vlan_brief
 from planning import build_changes, load_yaml, validate_plan
@@ -61,7 +65,7 @@ def connect_all(inventory, username, password):
             errors[switch] = "login failed (wrong username or password)"
             continue
         except (NetmikoTimeoutException, OSError) as error:
-            errors[switch] = "cannot reach %s: %s" % (details["host"], error)
+            errors[switch] = f"cannot reach {details['host']}: {error}"
             continue
 
         # The local user must have privilege 15 so we start at the '#' prompt.
@@ -88,14 +92,14 @@ def backup_switch(switch, connection, ports, timestamp):
     Returns (backup_path, port_configs).
     """
     os.makedirs(BACKUP_DIR, exist_ok=True)
-    backup_path = os.path.join(BACKUP_DIR, "%s_%s.cfg" % (switch, timestamp))
+    backup_path = os.path.join(BACKUP_DIR, f"{switch}_{timestamp}.cfg")
     running_config = connection.send_command("show running-config")
     with open(backup_path, "w") as f:
         f.write(running_config)
 
     port_configs = {}
     for port in ports:
-        output = connection.send_command("show running-config interface %s" % port)
+        output = connection.send_command(f"show running-config interface {port}")
         port_configs[port] = parse_interface_config(output)
     return backup_path, port_configs
 
@@ -112,7 +116,7 @@ def plan_switch(switch, connection, plan, port_configs):
 # ---------- Step 5: dry-run output ----------
 
 def print_changes(switch, commands, undo):
-    print("\n=== %s ===" % switch)
+    print(f"\n=== {switch} ===")
     if not commands:
         print("Nothing to change.")
         return
@@ -136,7 +140,7 @@ def main(argv=None):
         for error in errors:
             print("  - " + error)
         sys.exit(1)
-    print("Plan OK: %d VLANs, %d switches" % (len(plan["vlans"]), len(plan["switches"])))
+    print(f"Plan OK: {len(plan['vlans'])} VLANs, {len(plan['switches'])} switches")
 
     # Step 2: pre-check. If any switch fails, stop before changing anything.
     username, password = ask_credentials()
@@ -144,10 +148,10 @@ def main(argv=None):
     if errors:
         print("Pre-check FAILED, nothing was changed:")
         for switch, reason in errors.items():
-            print("  - %s: %s" % (switch, reason))
+            print(f"  - {switch}: {reason}")
         disconnect_all(connections)
         sys.exit(1)
-    print("Pre-check OK: all %d switches reachable over SSH" % len(connections))
+    print(f"Pre-check OK: all {len(connections)} switches reachable over SSH")
 
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -160,13 +164,13 @@ def main(argv=None):
 
             # Step 3: backup (local file only; flash copy is still TODO).
             backup_path, port_configs = backup_switch(switch, connection, access_ports, timestamp)
-            print("%s: backup saved to %s" % (switch, backup_path))
+            print(f"{switch}: backup saved to {backup_path}")
 
             # Step 4: build the change list. ValueError = unsafe switch state.
             try:
                 changes[switch] = plan_switch(switch, connection, plan, port_configs)
             except ValueError as error:
-                print("Stopped, nothing was changed: %s" % error)
+                print(f"Stopped, nothing was changed: {error}")
                 sys.exit(1)
 
         # Step 5: print commands and undo list per switch.

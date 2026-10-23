@@ -35,42 +35,42 @@ def validate_plan(plan, inventory):
         vlan_id = vlan.get("id")
         name = vlan.get("name")
         if not isinstance(vlan_id, int) or not 2 <= vlan_id <= 1001:
-            errors.append("VLAN id %r must be a number from 2 to 1001" % vlan_id)
+            errors.append(f"VLAN id {vlan_id} must be a number from 2 to 1001")
             continue
         if vlan_id == MANAGEMENT_VLAN:
             errors.append("VLAN 99 is the management VLAN and must not be in the plan")
         if vlan_id in planned_ids:
-            errors.append("VLAN %d is listed twice" % vlan_id)
+            errors.append(f"VLAN {vlan_id} is listed twice")
         if not isinstance(name, str) or not name or len(name) > 32 or " " in name:
-            errors.append("VLAN %d needs a name of 1-32 characters with no spaces" % vlan_id)
+            errors.append(f"VLAN {vlan_id} needs a name of 1-32 characters with no spaces")
         planned_ids.append(vlan_id)
 
     # --- Per switch ---
     for switch, settings in plan["switches"].items():
         if switch not in inventory:
-            errors.append("%s is in the plan but not in the inventory" % switch)
+            errors.append(f"{switch} is in the plan but not in the inventory")
         settings = settings or {}
         for key in settings:
             if key not in ("access", "trunks"):
-                errors.append("%s: unknown section '%s' (only 'access' and 'trunks' are allowed)" % (switch, key))
+                errors.append(f"{switch}: unknown section '{key}' (only 'access' and 'trunks' are allowed)")
 
         access = settings.get("access") or {}
         trunks = settings.get("trunks") or {}
 
         for port, vlan_id in access.items():
             if port in PROTECTED_PORTS.get(switch, []):
-                errors.append("%s %s is a protected baseline port" % (switch, port))
+                errors.append(f"{switch} {port} is a protected baseline port")
             if port in trunks:
-                errors.append("%s %s cannot be both an access port and a trunk" % (switch, port))
+                errors.append(f"{switch} {port} cannot be both an access port and a trunk")
             if vlan_id not in planned_ids:
-                errors.append("%s %s uses VLAN %r, which is not in the vlans list" % (switch, port, vlan_id))
+                errors.append(f"{switch} {port} uses VLAN {vlan_id}, which is not in the vlans list")
 
         for port, vlan_list in trunks.items():
             if port in PROTECTED_PORTS.get(switch, []):
-                errors.append("%s %s is a protected baseline port" % (switch, port))
+                errors.append(f"{switch} {port} is a protected baseline port")
             for vlan_id in vlan_list:
                 if vlan_id not in planned_ids:
-                    errors.append("%s trunk %s uses VLAN %r, which is not in the vlans list" % (switch, port, vlan_id))
+                    errors.append(f"{switch} trunk {port} uses VLAN {vlan_id}, which is not in the vlans list")
     return errors
 
 
@@ -102,47 +102,47 @@ def build_changes(switch, plan, current_vlans, current_trunks, port_configs):
         vlan_id = vlan["id"]
         name = vlan["name"]
         if vlan_id not in current_vlans:
-            changes.append((["vlan %d" % vlan_id, "name %s" % name],
-                            ["no vlan %d" % vlan_id]))
+            changes.append(([f"vlan {vlan_id}", f"name {name}"],
+                            [f"no vlan {vlan_id}"]))
         elif current_vlans[vlan_id]["name"] != name:
             old_name = current_vlans[vlan_id]["name"]
-            changes.append((["vlan %d" % vlan_id, "name %s" % name],
-                            ["vlan %d" % vlan_id, "name %s" % old_name]))
+            changes.append(([f"vlan {vlan_id}", f"name {name}"],
+                            [f"vlan {vlan_id}", f"name {old_name}"]))
 
     # 2. Trunks: only ever 'add' / 'remove', never replace the allowed list,
     #    otherwise VLAN 99 would be dropped and we would lose SSH.
     for port, wanted in (settings.get("trunks") or {}).items():
         if port not in current_trunks:
-            raise ValueError("%s %s is not an active trunk; the tool does not change trunk mode" % (switch, port))
+            raise ValueError(f"{switch} {port} is not an active trunk; the tool does not change trunk mode")
         missing = [v for v in wanted if v not in current_trunks[port]]
         if missing:
-            changes.append((["interface %s" % port,
-                             "switchport trunk allowed vlan add %s" % vlan_list_text(missing)],
-                            ["interface %s" % port,
-                             "switchport trunk allowed vlan remove %s" % vlan_list_text(missing)]))
+            changes.append(([f"interface {port}",
+                             f"switchport trunk allowed vlan add {vlan_list_text(missing)}"],
+                            [f"interface {port}",
+                             f"switchport trunk allowed vlan remove {vlan_list_text(missing)}"]))
 
     # 3. Access ports
     vlan99_ports = current_vlans.get(MANAGEMENT_VLAN, {}).get("ports", [])
     for port, vlan_id in (settings.get("access") or {}).items():
         if port in current_trunks:
-            raise ValueError("%s %s is currently a trunk; refusing to make it an access port" % (switch, port))
+            raise ValueError(f"{switch} {port} is currently a trunk; refusing to make it an access port")
         if port in vlan99_ports:
-            raise ValueError("%s %s is in management VLAN 99; refusing to change it" % (switch, port))
+            raise ValueError(f"{switch} {port} is in management VLAN 99; refusing to change it")
         if port not in port_configs:
-            raise ValueError("%s %s: no saved running-config for this port" % (switch, port))
+            raise ValueError(f"{switch} {port}: no saved running-config for this port")
 
         old_lines = port_configs[port]
-        wanted_lines = ["switchport mode access", "switchport access vlan %d" % vlan_id]
+        wanted_lines = ["switchport mode access", f"switchport access vlan {vlan_id}"]
         if all(line in old_lines for line in wanted_lines):
             continue  # already correct, nothing to do
 
-        commands = ["interface %s" % port] + wanted_lines
+        commands = [f"interface {port}"] + wanted_lines
         if not old_lines:
             # Port had no config: putting it back to default is a full undo.
-            undo = ["default interface %s" % port]
+            undo = [f"default interface {port}"]
         else:
             # Port had settings: reset it, then re-apply its old lines.
-            undo = ["default interface %s" % port, "interface %s" % port] + old_lines
+            undo = [f"default interface {port}", f"interface {port}"] + old_lines
         changes.append((commands, undo))
 
     # Commands run in order. Undo runs in reverse order (last change undone
