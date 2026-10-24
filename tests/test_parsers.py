@@ -55,6 +55,24 @@ def test_trunk_after():
     assert trunks["GigabitEthernet0/3"] == [10, 20, 30, 40, 99]
 
 
+def test_trunk_repeated_stp_header_iosvl2():
+    # Transcribed from a screenshot of real IOSvL2 output (not a raw capture).
+    # IOSvL2 printed the "spanning tree forwarding" header twice; Gi1/1 must
+    # still come from the "Vlans allowed on trunk" section only.
+    trunks = parse_trunk_allowed(read_sample("transcribed/SW1_show_interfaces_trunk.txt"))
+    assert trunks == {"GigabitEthernet0/1": [99], "GigabitEthernet0/2": [99],
+                      "GigabitEthernet0/3": [99], "GigabitEthernet1/1": [99]}
+
+
+def test_trunk_reads_allowed_section_only():
+    # Synthetic sample: same layout as above, but every section lists different
+    # VLANs, so a wrong section would give [10, 99] or [99] instead.
+    trunks = parse_trunk_allowed(read_sample("synthetic/SW1_trunk_sections_differ.txt"))
+    all_vlans = [10, 20, 30, 40, 99]
+    assert trunks == {"GigabitEthernet0/1": all_vlans, "GigabitEthernet0/2": all_vlans,
+                      "GigabitEthernet0/3": all_vlans, "GigabitEthernet1/1": all_vlans}
+
+
 def test_trunk_wrapped_line():
     output = (
         "Port        Vlans allowed on trunk\n"

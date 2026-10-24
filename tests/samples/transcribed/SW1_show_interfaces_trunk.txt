@@ -1,0 +1,31 @@
+# TRANSCRIBED, NOT A RAW CAPTURE.
+# SW1 "show interfaces trunk" on real IOSvL2 15.2 (GNS3, 24 Oct 2026), typed
+# by hand from a screenshot, so spacing may differ from the real output.
+# Quirk: the "spanning tree forwarding" section header is printed twice.
+# Replace with the raw capture in tests/samples/real/ when it arrives.
+
+Port        Mode             Encapsulation  Status        Native vlan
+Gi0/1       on               802.1q         trunking      1
+Gi0/2       on               802.1q         trunking      1
+Gi0/3       on               802.1q         trunking      1
+Gi1/1       on               802.1q         trunking      1
+
+Port        Vlans allowed on trunk
+Gi0/1       99
+Gi0/2       99
+Gi0/3       99
+Gi1/1       99
+
+Port        Vlans allowed and active in management domain
+Gi0/1       99
+Gi0/2       99
+Gi0/3       99
+Gi1/1       99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi0/1       99
+Gi0/2       99
+Gi0/3       99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi1/1       99

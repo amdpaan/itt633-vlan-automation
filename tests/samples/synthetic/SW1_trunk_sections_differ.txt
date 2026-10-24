@@ -1,0 +1,31 @@
+# SYNTHETIC, NOT REAL OUTPUT.
+# Based on tests/samples/transcribed/SW1_show_interfaces_trunk.txt (real
+# IOSvL2 layout, including the repeated "spanning tree forwarding" header),
+# but each section lists different VLANs on purpose, so a test can tell
+# which section the parser read. Only "Vlans allowed on trunk" should count.
+
+Port        Mode             Encapsulation  Status        Native vlan
+Gi0/1       on               802.1q         trunking      1
+Gi0/2       on               802.1q         trunking      1
+Gi0/3       on               802.1q         trunking      1
+Gi1/1       on               802.1q         trunking      1
+
+Port        Vlans allowed on trunk
+Gi0/1       10,20,30,40,99
+Gi0/2       10,20,30,40,99
+Gi0/3       10,20,30,40,99
+Gi1/1       10,20,30,40,99
+
+Port        Vlans allowed and active in management domain
+Gi0/1       10,99
+Gi0/2       10,99
+Gi0/3       10,99
+Gi1/1       10,99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi0/1       99
+Gi0/2       99
+Gi0/3       99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi1/1       99
