@@ -39,18 +39,19 @@ def test_vlan_brief_baseline():
 def test_vlan_brief_after():
     vlans = parse_vlan_brief(read_sample("sw1_show_vlan_brief_after.txt"))
     assert vlans[10] == {"name": "Sales", "ports": []}
-    assert vlans[30] == {"name": "Guest", "ports": ["GigabitEthernet0/3"]}
+    assert vlans[40] == {"name": "Finance", "ports": []}
+    assert vlans[99] == {"name": "Management", "ports": ["GigabitEthernet1/0"]}
     assert vlans[1002]["name"] == "fddi-default"
 
 
 def test_trunk_baseline():
     trunks = parse_trunk_allowed(read_sample("sw1_show_interfaces_trunk_baseline.txt"))
-    assert trunks == {"GigabitEthernet0/1": [99], "GigabitEthernet0/2": [99]}
+    assert trunks == {"GigabitEthernet0/1": [99], "GigabitEthernet0/2": [99], "GigabitEthernet0/3": [99]}
 
 
 def test_trunk_after():
     trunks = parse_trunk_allowed(read_sample("sw1_show_interfaces_trunk_after.txt"))
-    assert trunks["GigabitEthernet0/1"] == [10, 20, 30, 99]
+    assert trunks["GigabitEthernet0/3"] == [10, 20, 30, 40, 99]
 
 
 def test_trunk_wrapped_line():
@@ -64,14 +65,14 @@ def test_trunk_wrapped_line():
 
 
 def test_switchport():
-    info = parse_switchport(read_sample("sw1_show_interfaces_gi0_3_switchport.txt"))
+    info = parse_switchport(read_sample("sw4_show_interfaces_gi0_2_switchport.txt"))
     assert info == {"admin_mode": "static access", "oper_mode": "static access", "access_vlan": 30}
 
 
 def test_interface_config_empty():
-    assert parse_interface_config(read_sample("sw1_show_run_int_gi0_3_empty.txt")) == []
+    assert parse_interface_config(read_sample("sw2_show_run_int_gi0_1_empty.txt")) == []
 
 
 def test_interface_config_with_lines():
-    lines = parse_interface_config(read_sample("sw3_show_run_int_gi0_3_configured.txt"))
+    lines = parse_interface_config(read_sample("sw2_show_run_int_gi0_2_configured.txt"))
     assert lines == ["description old guest port", "switchport access vlan 5", "switchport mode access"]

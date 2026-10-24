@@ -3,17 +3,30 @@
 # manual baseline and the tool refuses a plan that touches them.
 # Interface names are for Cisco IOSvL2 15.2 (GigabitEthernet0/x).
 # If the image changes, update the names here and PROTECTED_PORTS in planning.py.
+# Every VLAN is created on every switch below, and every trunk carries all of them.
 vlans:
   - {id: 10, name: Sales}
   - {id: 20, name: IT}
   - {id: 30, name: Guest}
+  - {id: 40, name: Finance}
 switches:
   SW1:
-    access: {GigabitEthernet0/3: 30}
-    trunks: {GigabitEthernet0/1: [10, 20, 30], GigabitEthernet0/2: [10, 20, 30]}
+    # Core switch: no PCs, only trunks to the access switches.
+    trunks:
+      GigabitEthernet0/1: [10, 20, 30, 40]    # to SW2 Gi0/0
+      GigabitEthernet0/2: [10, 20, 30, 40]    # to SW3 Gi0/0
+      GigabitEthernet0/3: [10, 20, 30, 40]    # to SW4 Gi0/0
+      # GigabitEthernet1/1: [10, 20, 30, 40]  # to SW5 Gi0/0 (optional)
   SW2:
     access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 20}
-    trunks: {GigabitEthernet0/0: [10, 20, 30]}
+    trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
   SW3:
-    access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 20, GigabitEthernet0/3: 30}
-    trunks: {GigabitEthernet0/0: [10, 20, 30]}
+    access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 40}
+    trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
+  SW4:
+    access: {GigabitEthernet0/1: 20, GigabitEthernet0/2: 30}
+    trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
+  # SW5 (optional): uncomment together with SW5 in inventory.yaml and SW1 Gi1/1 above.
+  # SW5:
+  #   access: {GigabitEthernet0/1: 40, GigabitEthernet0/2: 30}
+  #   trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}

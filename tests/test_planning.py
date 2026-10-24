@@ -16,20 +16,59 @@ from planning import build_changes, load_yaml, validate_plan
 PROJECT_DIR = os.path.dirname(os.path.dirname(__file__))
 PLAN = load_yaml(os.path.join(PROJECT_DIR, "plan.yaml"))
 INVENTORY = load_yaml(os.path.join(PROJECT_DIR, "inventory.yaml"))
+ALL_VLANS = [(10, "Sales"), (20, "IT"), (30, "Guest"), (40, "Finance")]
 
 
 def sw1_baseline():
-    """SW1 state after the manual baseline, before the tool runs."""
+    """SW1 (core) state after the manual baseline: three trunks, no PC ports."""
     vlans = parse_vlan_brief(read_sample("sw1_show_vlan_brief_baseline.txt"))
     trunks = parse_trunk_allowed(read_sample("sw1_show_interfaces_trunk_baseline.txt"))
-    ports = {"GigabitEthernet0/3": parse_interface_config(read_sample("sw1_show_run_int_gi0_3_empty.txt"))}
+    return vlans, trunks, {}
+
+
+def access_baseline(switch):
+    """SW2/SW3/SW4 state after the baseline: uplink Gi0/0, PC ports empty.
+
+    All access switches are set up the same way, so they share SW2's samples.
+    """
+    vlans = parse_vlan_brief(read_sample("sw2_show_vlan_brief_baseline.txt"))
+    trunks = parse_trunk_allowed(read_sample("sw2_show_interfaces_trunk_baseline.txt"))
+    empty = parse_interface_config(read_sample("sw2_show_run_int_gi0_1_empty.txt"))
+    ports = {port: empty for port in PLAN["switches"][switch]["access"]}
     return vlans, trunks, ports
+
+
+def plan_with_sw5():
+    """The real plan and inventory with the optional SW5 switched on."""
+    plan = copy.deepcopy(PLAN)
+    inventory = copy.deepcopy(INVENTORY)
+    plan["switches"]["SW1"]["trunks"]["GigabitEthernet1/1"] = [10, 20, 30, 40]
+    plan["switches"]["SW5"] = {"access": {"GigabitEthernet0/1": 40, "GigabitEthernet0/2": 30},
+                               "trunks": {"GigabitEthernet0/0": [10, 20, 30, 40]}}
+    inventory["SW5"] = {"host": "192.168.99.15", "device_type": "cisco_ios"}
+    return plan, inventory
 
 
 # ---------- validate_plan ----------
 
 def test_real_plan_is_valid():
     assert validate_plan(PLAN, INVENTORY) == []
+
+
+def test_plan_matches_inventory():
+    """SW5 is commented out in both files; the other four must match."""
+    assert list(PLAN["switches"]) == ["SW1", "SW2", "SW3", "SW4"]
+    assert list(INVENTORY) == ["SW1", "SW2", "SW3", "SW4"]
+
+
+def test_plan_with_sw5_is_valid():
+    plan, inventory = plan_with_sw5()
+    assert validate_plan(plan, inventory) == []
+
+
+def test_refuses_sw5_in_plan_but_not_in_inventory():
+    plan, _ = plan_with_sw5()
+    assert any("SW5" in e for e in validate_plan(plan, INVENTORY))
 
 
 def test_refuses_vlan_99():
@@ -40,7 +79,7 @@ def test_refuses_vlan_99():
 
 def test_refuses_host_port():
     plan = copy.deepcopy(PLAN)
-    plan["switches"]["SW1"]["access"]["GigabitEthernet1/0"] = 10
+    plan["switches"]["SW1"]["access"] = {"GigabitEthernet1/0": 10}
     assert any("protected" in e for e in validate_plan(plan, INVENTORY))
 
 
@@ -52,14 +91,14 @@ def test_refuses_unknown_section():
 
 def test_refuses_switch_not_in_inventory():
     plan = copy.deepcopy(PLAN)
-    plan["switches"]["SW4"] = {"access": {"GigabitEthernet0/1": 10}}
-    assert any("SW4" in e for e in validate_plan(plan, INVENTORY))
+    plan["switches"]["SW9"] = {"access": {"GigabitEthernet0/1": 10}}
+    assert any("SW9" in e for e in validate_plan(plan, INVENTORY))
 
 
 def test_refuses_vlan_not_in_list():
     plan = copy.deepcopy(PLAN)
-    plan["switches"]["SW2"]["access"]["GigabitEthernet0/3"] = 40
-    assert any("VLAN 40" in e for e in validate_plan(plan, INVENTORY))
+    plan["switches"]["SW2"]["access"]["GigabitEthernet0/3"] = 50
+    assert any("VLAN 50" in e for e in validate_plan(plan, INVENTORY))
 
 
 # ---------- build_changes ----------
@@ -71,42 +110,60 @@ def test_sw1_from_baseline():
         "vlan 10", "name Sales",
         "vlan 20", "name IT",
         "vlan 30", "name Guest",
-        "interface GigabitEthernet0/1", "switchport trunk allowed vlan add 10,20,30",
-        "interface GigabitEthernet0/2", "switchport trunk allowed vlan add 10,20,30",
-        "interface GigabitEthernet0/3", "switchport mode access", "switchport access vlan 30",
+        "vlan 40", "name Finance",
+        "interface GigabitEthernet0/1", "switchport trunk allowed vlan add 10,20,30,40",
+        "interface GigabitEthernet0/2", "switchport trunk allowed vlan add 10,20,30,40",
+        "interface GigabitEthernet0/3", "switchport trunk allowed vlan add 10,20,30,40",
     ]
-    # Undo runs in reverse order: port first, VLANs last.
+    # Undo runs in reverse order: trunks first, VLANs last.
     assert undo == [
-        "default interface GigabitEthernet0/3",
-        "interface GigabitEthernet0/2", "switchport trunk allowed vlan remove 10,20,30",
-        "interface GigabitEthernet0/1", "switchport trunk allowed vlan remove 10,20,30",
+        "interface GigabitEthernet0/3", "switchport trunk allowed vlan remove 10,20,30,40",
+        "interface GigabitEthernet0/2", "switchport trunk allowed vlan remove 10,20,30,40",
+        "interface GigabitEthernet0/1", "switchport trunk allowed vlan remove 10,20,30,40",
+        "no vlan 40",
         "no vlan 30",
         "no vlan 20",
         "no vlan 10",
     ]
 
 
+def test_sw3_from_baseline():
+    vlans, trunks, ports = access_baseline("SW3")
+    commands, undo = build_changes("SW3", PLAN, vlans, trunks, ports)
+    assert commands[8:] == [
+        "interface GigabitEthernet0/0", "switchport trunk allowed vlan add 10,20,30,40",
+        "interface GigabitEthernet0/1", "switchport mode access", "switchport access vlan 10",
+        "interface GigabitEthernet0/2", "switchport mode access", "switchport access vlan 40",
+    ]
+    # Undo runs in reverse order: PC ports first, then the uplink, then VLANs.
+    assert undo[:4] == [
+        "default interface GigabitEthernet0/2",
+        "default interface GigabitEthernet0/1",
+        "interface GigabitEthernet0/0", "switchport trunk allowed vlan remove 10,20,30,40",
+    ]
+
+
 def test_never_replaces_trunk_list():
-    vlans, trunks, ports = sw1_baseline()
-    commands, undo = build_changes("SW1", PLAN, vlans, trunks, ports)
-    for line in commands + undo:
-        if line.startswith("switchport trunk allowed vlan"):
-            assert " add " in line or " remove " in line
+    for switch in PLAN["switches"]:
+        vlans, trunks, ports = sw1_baseline() if switch == "SW1" else access_baseline(switch)
+        commands, undo = build_changes(switch, PLAN, vlans, trunks, ports)
+        for line in commands + undo:
+            if line.startswith("switchport trunk allowed vlan"):
+                assert " add " in line or " remove " in line
 
 
 def test_only_missing_trunk_vlans_added():
     vlans, trunks, ports = sw1_baseline()
     trunks["GigabitEthernet0/1"] = [10, 99]
     commands, undo = build_changes("SW1", PLAN, vlans, trunks, ports)
-    assert "switchport trunk allowed vlan add 20,30" in commands
-    assert "switchport trunk allowed vlan remove 20,30" in undo
+    assert "switchport trunk allowed vlan add 20,30,40" in commands
+    assert "switchport trunk allowed vlan remove 20,30,40" in undo
 
 
 def test_nothing_to_do_when_already_done():
     vlans = parse_vlan_brief(read_sample("sw1_show_vlan_brief_after.txt"))
     trunks = parse_trunk_allowed(read_sample("sw1_show_interfaces_trunk_after.txt"))
-    ports = {"GigabitEthernet0/3": ["switchport access vlan 30", "switchport mode access"]}
-    assert build_changes("SW1", PLAN, vlans, trunks, ports) == ([], [])
+    assert build_changes("SW1", PLAN, vlans, trunks, {}) == ([], [])
 
 
 def test_wrong_vlan_name_is_renamed_back_on_undo():
@@ -118,13 +175,13 @@ def test_wrong_vlan_name_is_renamed_back_on_undo():
 
 
 def test_port_with_old_config_is_restored_on_undo():
-    vlans, trunks, ports = sw1_baseline()
-    old = parse_interface_config(read_sample("sw3_show_run_int_gi0_3_configured.txt"))
-    ports["GigabitEthernet0/3"] = old
-    commands, undo = build_changes("SW1", PLAN, vlans, trunks, ports)
+    vlans, trunks, ports = access_baseline("SW2")
+    old = parse_interface_config(read_sample("sw2_show_run_int_gi0_2_configured.txt"))
+    ports["GigabitEthernet0/2"] = old
+    commands, undo = build_changes("SW2", PLAN, vlans, trunks, ports)
     assert undo[:5] == [
-        "default interface GigabitEthernet0/3",
-        "interface GigabitEthernet0/3",
+        "default interface GigabitEthernet0/2",
+        "interface GigabitEthernet0/2",
         "description old guest port",
         "switchport access vlan 5",
         "switchport mode access",
@@ -138,27 +195,36 @@ def test_refuses_trunk_that_is_not_a_trunk():
         build_changes("SW1", PLAN, vlans, trunks, ports)
 
 
-def test_refuses_access_port_in_vlan_99():
+def test_refuses_sw1_gi1_1_trunk_when_sw5_is_missing():
+    """Turning on SW1 Gi1/1 in the plan before SW5 is cabled must stop, not guess."""
+    plan, _ = plan_with_sw5()
     vlans, trunks, ports = sw1_baseline()
-    vlans[99]["ports"].append("GigabitEthernet0/3")
+    with pytest.raises(ValueError, match="GigabitEthernet1/1 is not an active trunk"):
+        build_changes("SW1", plan, vlans, trunks, ports)
+
+
+def test_refuses_access_port_in_vlan_99():
+    vlans, trunks, ports = access_baseline("SW2")
+    vlans[99]["ports"].append("GigabitEthernet0/1")
     with pytest.raises(ValueError, match="VLAN 99"):
-        build_changes("SW1", PLAN, vlans, trunks, ports)
+        build_changes("SW2", PLAN, vlans, trunks, ports)
 
 
 def test_every_switch_gets_all_vlans():
     """VTP transparent: each switch needs its own VLANs, including SW1 (the core)."""
-    samples = {
-        "SW1": ("sw1_show_vlan_brief_baseline.txt", "sw1_show_interfaces_trunk_baseline.txt"),
-        "SW2": ("sw2_show_vlan_brief_baseline.txt", "sw2_show_interfaces_trunk_baseline.txt"),
-        # SW3's baseline is set up like SW2's (trunk on Gi0/0, no host port)
-        "SW3": ("sw2_show_vlan_brief_baseline.txt", "sw2_show_interfaces_trunk_baseline.txt"),
-    }
-    for switch, (vlan_file, trunk_file) in samples.items():
-        vlans = parse_vlan_brief(read_sample(vlan_file))
-        trunks = parse_trunk_allowed(read_sample(trunk_file))
-        ports = {port: [] for port in PLAN["switches"][switch]["access"]}
+    for switch in ["SW1", "SW2", "SW3", "SW4"]:
+        vlans, trunks, ports = sw1_baseline() if switch == "SW1" else access_baseline(switch)
         commands, undo = build_changes(switch, PLAN, vlans, trunks, ports)
-        for vlan_id, name in [(10, "Sales"), (20, "IT"), (30, "Guest")]:
-            assert "vlan %d" % vlan_id in commands, switch
-            assert "name %s" % name in commands, switch
-            assert "no vlan %d" % vlan_id in undo, switch
+        for vlan_id, name in ALL_VLANS:
+            assert f"vlan {vlan_id}" in commands, switch
+            assert f"name {name}" in commands, switch
+            assert f"no vlan {vlan_id}" in undo, switch
+
+
+def test_sw5_gets_its_ports_when_turned_on():
+    plan, _ = plan_with_sw5()
+    vlans, trunks, ports = access_baseline("SW2")
+    ports = {"GigabitEthernet0/1": [], "GigabitEthernet0/2": []}
+    commands, undo = build_changes("SW5", plan, vlans, trunks, ports)
+    assert "switchport access vlan 40" in commands
+    assert "switchport access vlan 30" in commands

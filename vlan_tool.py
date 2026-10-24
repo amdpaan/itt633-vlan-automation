@@ -156,7 +156,7 @@ def main(argv=None):
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         changes = {}
-        # Processing order follows plan.yaml: SW1, SW2, SW3.
+        # Processing order follows plan.yaml: SW1, SW2, SW3, SW4 (then SW5 if enabled).
         for switch in plan["switches"]:
             connection = connections[switch]
             settings = plan["switches"][switch] or {}
@@ -181,7 +181,7 @@ def main(argv=None):
             print("\nDry run: nothing was sent to the switches.")
             return
 
-        # TODO steps 6-8: per switch SW1, SW2, SW3: apply, verify, save or roll back
+        # TODO steps 6-8: per switch in plan order: apply, verify, save or roll back
         # TODO step 9: write reports/report_<timestamp>.json and the log file
         print("\nApply/verify/rollback are not written yet. Nothing was changed.")
     finally:

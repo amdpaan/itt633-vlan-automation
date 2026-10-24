@@ -18,11 +18,13 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(__file__))
 ARGS = ["--plan", os.path.join(PROJECT_DIR, "plan.yaml"),
         "--inventory", os.path.join(PROJECT_DIR, "inventory.yaml")]
 
-# Which sample files each fake switch answers with (SW3 looks like SW2).
+# Which sample files each fake switch answers with (SW3 and SW4 look like SW2).
+ACCESS = ("sw2_show_vlan_brief_baseline.txt", "sw2_show_interfaces_trunk_baseline.txt")
 SAMPLES = {
     "192.168.99.11": ("sw1_show_vlan_brief_baseline.txt", "sw1_show_interfaces_trunk_baseline.txt"),
-    "192.168.99.12": ("sw2_show_vlan_brief_baseline.txt", "sw2_show_interfaces_trunk_baseline.txt"),
-    "192.168.99.13": ("sw2_show_vlan_brief_baseline.txt", "sw2_show_interfaces_trunk_baseline.txt"),
+    "192.168.99.12": ACCESS,
+    "192.168.99.13": ACCESS,
+    "192.168.99.14": ACCESS,
 }
 
 
@@ -160,12 +162,15 @@ def test_dry_run_prints_commands_and_changes_nothing(switches, tmp_path, capsys)
     vlan_tool.main(ARGS + ["--dry-run"])
     out = capsys.readouterr().out
 
-    assert "=== SW1 ===" in out and "=== SW2 ===" in out and "=== SW3 ===" in out
-    assert "switchport trunk allowed vlan add 10,20,30" in out
-    assert "default interface GigabitEthernet0/3" in out
+    for switch in ["SW1", "SW2", "SW3", "SW4"]:
+        assert f"=== {switch} ===" in out
+    assert "SW5" not in out  # commented out in inventory.yaml and plan.yaml
+    assert "switchport trunk allowed vlan add 10,20,30,40" in out
+    assert "switchport access vlan 40" in out
+    assert "default interface GigabitEthernet0/2" in out
     assert "Dry run: nothing was sent" in out
     # One backup file per switch
-    assert sorted(f.split("_")[0] for f in os.listdir(tmp_path / "backups")) == ["SW1", "SW2", "SW3"]
+    assert sorted(f.split("_")[0] for f in os.listdir(tmp_path / "backups")) == ["SW1", "SW2", "SW3", "SW4"]
     for fake in switches.values():
         assert fake.config_sent == []   # no config, no write memory
         assert fake.disconnected
