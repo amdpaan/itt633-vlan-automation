@@ -24,6 +24,7 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 
 - Development: the user writes code on an **Apple Silicon Mac** and shares it with the group through Git/GitHub. Check arm64 compatibility before suggesting any tool.
 - Lab: GNS3 (2.2.x) with the GNS3 VM, running on a Windows PC or the faculty lab computers. Cisco x86 images do not run well on Apple Silicon.
+- **Paan does not run GNS3.** A friend runs the lab and sends back saved output, screenshots or error messages. Paan then adds them to the repo or pastes them into the session. Anything that needs the lab (running the tool, show commands, pings, test-case evidence) goes through that friend.
 - Switch image: Cisco **IOSvL2 15.2** in GNS3 (replaced IOL-L2; not confirmed working yet). Interface names are `GigabitEthernet0/0`, `GigabitEthernet0/1`, and so on (short form `Gi0/x` in show output). Old IOL-L2 names map as e0/0->Gi0/0, e0/1->Gi0/1, e0/2->Gi0/2, e0/3->Gi0/3, e1/0->Gi1/0. If the image changes again, only plan.yaml and `PROTECTED_PORTS` in planning.py should need to change.
 - End hosts: VPCS. The automation host joins VLAN 99 through a GNS3 Cloud node (method still to be tested, for example a Windows loopback adapter).
 - **Nothing has been tested on a real Cisco image yet.** Never claim that code or commands work on the switches. Say what still needs testing in GNS3.
@@ -199,3 +200,49 @@ Fully idempotent re-runs (skip ports already correct), roll back all switches to
 - Keep answers short and step by step. Give working code with brief comments.
 - Ask before assuming team roles, topology changes or device models.
 - After writing code, say clearly what was tested (for example pytest on sample output) and what still needs testing in GNS3.
+- When a step needs the lab, write a short, numbered instruction sheet that Paan can forward to the friend. It should give the exact commands to run on each switch or on the automation host, and say what to save and how to name each file (for example `sw1_show_vlan_brief_real.txt`). Do not assume Paan can run or check anything in GNS3 directly.
+- Commit and push only when Paan asks. When asked to see the diff first, stage the changes, show the diff, and wait before committing.
+
+## Current status (handoff, last updated 24 Oct 2026)
+
+Read this section first in a new session. `git log` has the full history.
+
+### Done (tested with pytest on hand-written sample data only)
+
+- Image moved to IOSvL2 15.2; all names are `GigabitEthernet0/x`. Five-switch topology with VLAN 40 is in `inventory.yaml`, `plan.yaml`, the samples and the tests.
+- `parsers.py`: `show vlan brief`, `show interfaces trunk`, `show interfaces <port> switchport`, `show running-config interface <port>`.
+- `planning.py`: `validate_plan()` (safety rules) and `build_changes()` (commands + undo list).
+- `vlan_tool.py` steps 1 to 5:
+  - `connect_all()`: SSH pre-check that stops if any switch fails, and checks for the `#` prompt (privilege 15).
+  - `backup_switch()`: saves `show running-config` to `backups/<switch>_<timestamp>.cfg` and captures each planned access port's config.
+  - `plan_switch()`: reads the switch state and builds the change list.
+  - `--dry-run` prints the commands and undo list per switch.
+  - Credentials come from `input()` and `getpass`. They are never stored.
+- 40 pytest tests: `tests/test_parsers.py`, `tests/test_planning.py`, `tests/test_vlan_tool.py`.
+  - `tests/test_vlan_tool.py` replaces Netmiko's `ConnectHandler` with a `FakeSwitch` class that answers with the sample files. SW3 to SW5 reuse SW2's samples.
+  - To try a dry-run without switches, patch `vlan_tool.ConnectHandler`, `vlan_tool.ask_credentials` and `vlan_tool.BACKUP_DIR` the same way.
+
+### Not done yet (in timeline order)
+
+1. GNS3 lab (run by Paan's friend, not Paan): build the five-switch baseline and run TC01 and TC02. Capture real IOSvL2 output for each parsed command into `tests/samples/` (for example `sw1_show_vlan_brief_real.txt`), add tests, fix the parsers if needed, then update the "NOT YET VERIFIED" notes in `parsers.py`, the test files and `tests/samples/README.md`.
+2. Step 3, second half: `copy running-config flash:pre_change.cfg` on each switch, handling the confirmation prompt. This was left out on purpose so far, so that `--dry-run` writes nothing to the switches. Decide with Paan whether the flash copy runs in dry-run mode.
+3. Step 6: apply with `send_config_set`, and treat `% Invalid input`, `% Incomplete command` and `% Ambiguous command` in the output as a failure.
+4. Step 7: verify against plan.yaml, using `parse_switchport()` for the access ports.
+5. Step 8: on pass, `save_config()`. On fail, run the undo list, do not save, and stop before the remaining switches.
+6. Step 9: `reports/report_<timestamp>.json` (fields listed in "report.json content" above) and a log file in `logs/`.
+
+### Still unverified or assumed
+
+- Nothing has run on real IOSvL2. All samples in `tests/samples/` are hand-written.
+- Assumed and not yet confirmed by the group:
+  - The VLAN 40 subnet is 192.168.40.0/24.
+  - The automation host stays on SW1 GigabitEthernet1/0.
+- Possible lab issues:
+  - `show running-config` may be slow on IOSvL2, so Netmiko timeouts may need raising.
+  - The local user must be privilege 15.
+
+### Tooling notes
+
+- Run tests with `.venv/bin/python -m pytest` (netmiko 4.6.0 is installed in `.venv`).
+- Code style: f-strings, and imports sorted per Ruff (`UP031`, `I001`). Ruff is not in `.venv`; the VS Code Ruff extension bundles it. The test files still use `%` formatting.
+- Add a row to CONTRIBUTIONS.md for each piece of work, marked "(AI-assisted)" where it applies.
