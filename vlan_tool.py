@@ -156,7 +156,7 @@ def main(argv=None):
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         changes = {}
-        # Processing order follows plan.yaml: SW1, SW2, SW3, SW4 (then SW5 if enabled).
+        # Processing order follows plan.yaml: SW1, SW2, SW3, SW4, SW5.
         for switch in plan["switches"]:
             connection = connections[switch]
             settings = plan["switches"][switch] or {}

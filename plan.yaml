@@ -16,7 +16,7 @@ switches:
       GigabitEthernet0/1: [10, 20, 30, 40]    # to SW2 Gi0/0
       GigabitEthernet0/2: [10, 20, 30, 40]    # to SW3 Gi0/0
       GigabitEthernet0/3: [10, 20, 30, 40]    # to SW4 Gi0/0
-      # GigabitEthernet1/1: [10, 20, 30, 40]  # to SW5 Gi0/0 (optional)
+      GigabitEthernet1/1: [10, 20, 30, 40]    # to SW5 Gi0/0
   SW2:
     access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 20}
     trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
@@ -26,7 +26,6 @@ switches:
   SW4:
     access: {GigabitEthernet0/1: 20, GigabitEthernet0/2: 30}
     trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
-  # SW5 (optional): uncomment together with SW5 in inventory.yaml and SW1 Gi1/1 above.
-  # SW5:
-  #   access: {GigabitEthernet0/1: 40, GigabitEthernet0/2: 30}
-  #   trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
+  SW5:
+    access: {GigabitEthernet0/1: 40, GigabitEthernet0/2: 30}
+    trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}

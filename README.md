@@ -2,9 +2,14 @@
 
 Intent-Driven VLAN Automation with Verification and Rollback Using Python and Netmiko.
 
-A Python tool that reads one YAML plan, deploys VLANs to four Cisco switches
-(core SW1, access SW2 to SW4; SW5 optional) over SSH, checks the result, saves only if every check passes,
+A Python tool that reads one YAML plan, deploys VLANs to five Cisco switches
+(core SW1, access SW2 to SW5) over SSH, checks the result, saves only if every check passes,
 and undoes its own changes if a check fails.
+
+Topology: 5 switches, 4 user VLANs (10 Sales, 20 IT, 30 Guest, 40 Finance) plus
+management VLAN 99, 8 access ports (PC1 to PC8), and 4 trunk links from SW1 to
+each access switch. Same-VLAN pings across switches (TC06): PC1 to PC3 (VLAN 10),
+PC2 to PC5 (VLAN 20), PC6 to PC8 (VLAN 30), PC4 to PC7 (VLAN 40).
 
 > **Status:** early skeleton. The parsing and planning code is tested with
 > pytest on hand-written sample output. **Nothing has been tested on the
@@ -31,7 +36,7 @@ Each member's work is recorded in [CONTRIBUTIONS.md](CONTRIBUTIONS.md).
 - [ ] Proposal approved by lecturer
 - [ ] GNS3 + Cisco IOSvL2 lab working
 - [x] Switched lab image to Cisco IOSvL2 15.2 (GigabitEthernet0/x names, VTP transparent)
-- [x] Pre-check, local backup, change list and `--dry-run` (39 pytest tests, fake switches, not yet tested in GNS3)
+- [x] Pre-check, local backup, change list and `--dry-run` (40 pytest tests, fake switches, not yet tested in GNS3)
 - [ ] Flash backup copy, apply, verify, rollback, report.json
 - [ ] Test cases TC01–TC11 run with evidence
 

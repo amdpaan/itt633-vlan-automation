@@ -46,7 +46,8 @@ def test_vlan_brief_after():
 
 def test_trunk_baseline():
     trunks = parse_trunk_allowed(read_sample("sw1_show_interfaces_trunk_baseline.txt"))
-    assert trunks == {"GigabitEthernet0/1": [99], "GigabitEthernet0/2": [99], "GigabitEthernet0/3": [99]}
+    assert trunks == {"GigabitEthernet0/1": [99], "GigabitEthernet0/2": [99],
+                      "GigabitEthernet0/3": [99], "GigabitEthernet1/1": [99]}
 
 
 def test_trunk_after():

@@ -6,11 +6,11 @@ Read this file before writing or changing any code in this repository.
 
 A university group project (ITT633, FSKM, UiTM Shah Alam, semester September 2026 to January 2027, lecturer Kamarul Ariffin bin Abdul Basit). Group of 4 students (see the Team table in README.md). The group leader is Muhammad Afiq bin Khairul Anuar; the other roles are not decided yet, so do not assign names to tasks. Record each member's work in CONTRIBUTIONS.md.
 
-The project builds a Python tool that deploys VLAN configuration to four Cisco switches (a fifth, SW5, is optional) from one YAML file, verifies the result against the file, saves only when every check passes, and rolls back its own changes when a check fails.
+The project builds a Python tool that deploys VLAN configuration to five Cisco switches from one YAML file, verifies the result against the file, saves only when every check passes, and rolls back its own changes when a check fails.
 
 Working title: **Intent-Driven VLAN Automation with Verification and Rollback Using Python and Netmiko**.
 
-Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-storey head office: one core switch (SW1) and three access switches (SW2 to SW4), plus an optional fifth (SW5).
+Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-storey head office: one core switch (SW1) and four access switches (SW2 to SW5).
 
 ## Rules that come from the course guideline
 
@@ -18,7 +18,7 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 - The project must not copy an existing project. If you use an idea or snippet from a tutorial or repository, say so in a comment and tell the user so it can be cited in the report.
 - Success must be proven on the network (show commands and pings), not only by the script finishing without errors.
 - Scope is fixed by the approved proposal. Do not add features outside the core list below unless the user asks. Flag anything that could break scope or the 8-week timeline.
-- Approved scope change (24 Oct 2026): after reviewing the proposal, the lecturer asked for a bigger topology: 4 to 5 switches (SW1 core, SW2 to SW4 access, SW5 optional) and a new VLAN 40 Finance. The network design below already reflects this. It is a lecturer request, not a scope risk; mention it in the report as the reason the design differs from the original three-switch proposal.
+- Approved scope change (24 Oct 2026): after reviewing the proposal, the lecturer asked for a bigger topology: 4 to 5 switches (SW1 core, SW2 to SW4 access, SW5 optional) and a new VLAN 40 Finance. The network design below already reflects this. It is a lecturer request, not a scope risk; mention it in the report as the reason the design differs from the original three-switch proposal. The group then made SW5 part of the topology after a lab RAM test passed with all five switches running.
 
 ## Environment
 
@@ -44,7 +44,7 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 | SW2 (access) | SVI vlan 99 | 99 | 192.168.99.12 |
 | SW3 (access) | SVI vlan 99 | 99 | 192.168.99.13 |
 | SW4 (access) | SVI vlan 99 | 99 | 192.168.99.14 |
-| SW5 (access, optional) | SVI vlan 99 | 99 | 192.168.99.15 |
+| SW5 (access) | SVI vlan 99 | 99 | 192.168.99.15 |
 | Automation host | SW1 GigabitEthernet1/0 | 99 | 192.168.99.100 |
 | PC1 Sales | SW2 GigabitEthernet0/1 | 10 | 192.168.10.10 |
 | PC2 IT | SW2 GigabitEthernet0/2 | 20 | 192.168.20.10 |
@@ -52,18 +52,18 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 | PC4 Finance | SW3 GigabitEthernet0/2 | 40 | 192.168.40.10 |
 | PC5 IT | SW4 GigabitEthernet0/1 | 20 | 192.168.20.11 |
 | PC6 Guest | SW4 GigabitEthernet0/2 | 30 | 192.168.30.10 |
-| PC7 Finance (optional) | SW5 GigabitEthernet0/1 | 40 | 192.168.40.11 |
-| PC8 Guest (optional) | SW5 GigabitEthernet0/2 | 30 | 192.168.30.11 |
+| PC7 Finance | SW5 GigabitEthernet0/1 | 40 | 192.168.40.11 |
+| PC8 Guest | SW5 GigabitEthernet0/2 | 30 | 192.168.30.11 |
 
-Trunks (802.1Q), star from the core: SW1 GigabitEthernet0/1 to SW2, SW1 GigabitEthernet0/2 to SW3, SW1 GigabitEthernet0/3 to SW4, and (optional) SW1 GigabitEthernet1/1 to SW5. Each access switch uplinks on its GigabitEthernet0/0. Every trunk's final allowed list is 10, 20, 30, 40, 99.
+Trunks (802.1Q), star from the core: SW1 GigabitEthernet0/1 to SW2, SW1 GigabitEthernet0/2 to SW3, SW1 GigabitEthernet0/3 to SW4, and SW1 GigabitEthernet1/1 to SW5. Each access switch uplinks on its GigabitEthernet0/0. Every trunk's final allowed list is 10, 20, 30, 40, 99.
 
-SW5 is optional: it is commented out in inventory.yaml and plan.yaml (together with SW1 GigabitEthernet1/1). Without SW5, VLAN 30 and VLAN 40 each have only one PC, so their same-VLAN pings in TC06 need SW5.
+Totals: 5 switches, 4 user VLANs (10, 20, 30, 40) plus management VLAN 99, 8 access ports (PC1 to PC8), and 4 trunk links (SW1 to each access switch).
 
 There is **no router**. Pings between different VLANs must fail; that proves isolation.
 
 ### Manual baseline (done by hand before the tool runs)
 
-Hostname, `vtp mode transparent`, VLAN 99 and its SVI address, local user (privilege 15, so the tool lands in enable mode), SSH, every trunk link (SW1 Gi0/1, Gi0/2, Gi0/3, and Gi1/1 if SW5 is used; Gi0/0 on each access switch; mode trunk, allowed VLAN 99), and the host port SW1 GigabitEthernet1/0 in VLAN 99. The tool reaches SW2 to SW5 through these trunks, so **the tool must never break them**. VTP transparent mode means each switch keeps its own VLAN list (no VTP sync between switches), so the tool must create the VLANs on every switch, and VLANs are stored in the running config.
+Hostname, `vtp mode transparent`, VLAN 99 and its SVI address, local user (privilege 15, so the tool lands in enable mode), SSH, every trunk link (SW1 Gi0/1, Gi0/2, Gi0/3, Gi1/1; Gi0/0 on each access switch; mode trunk, allowed VLAN 99), and the host port SW1 GigabitEthernet1/0 in VLAN 99. The tool reaches SW2 to SW5 through these trunks, so **the tool must never break them**. VTP transparent mode means each switch keeps its own VLAN list (no VTP sync between switches), so the tool must create the VLANs on every switch, and VLANs are stored in the running config.
 
 ## What the tool does (core scope)
 
@@ -77,7 +77,7 @@ Hostname, `vtp mode transparent`, VLAN 99 and its SVI address, local user (privi
 8. Pass: `write memory` (Netmiko `save_config()`). Fail: run the undo list for that switch, do not save.
 9. Write `reports/report_<timestamp>.json` and a log file in `logs/`.
 
-Processing order: SW1, then SW2, SW3, SW4 (then SW5 if enabled), one switch at a time (apply, verify, save or roll back). If a switch fails, roll it back and stop; do not touch the remaining switches. Switches already passed stay saved, and the report must say so. Rolling back all switches together is a stretch goal.
+Processing order: SW1, then SW2, SW3, SW4, SW5, one switch at a time (apply, verify, save or roll back). If a switch fails, roll it back and stop; do not touch the remaining switches. Switches already passed stay saved, and the report must say so. Rolling back all switches together is a stretch goal.
 
 ### Undo rules (rollback Method C)
 
@@ -108,11 +108,11 @@ SW1: {host: 192.168.99.11, device_type: cisco_ios}
 SW2: {host: 192.168.99.12, device_type: cisco_ios}
 SW3: {host: 192.168.99.13, device_type: cisco_ios}
 SW4: {host: 192.168.99.14, device_type: cisco_ios}
-# SW5: {host: 192.168.99.15, device_type: cisco_ios}   # optional
+SW5: {host: 192.168.99.15, device_type: cisco_ios}
 ```
 
 ```yaml
-# plan.yaml (SW5 and SW1 Gi1/1 are commented out until SW5 is used)
+# plan.yaml
 vlans:
   - {id: 10, name: Sales}
   - {id: 20, name: IT}
@@ -124,7 +124,7 @@ switches:
       GigabitEthernet0/1: [10, 20, 30, 40]    # to SW2
       GigabitEthernet0/2: [10, 20, 30, 40]    # to SW3
       GigabitEthernet0/3: [10, 20, 30, 40]    # to SW4
-      # GigabitEthernet1/1: [10, 20, 30, 40]  # to SW5
+      GigabitEthernet1/1: [10, 20, 30, 40]    # to SW5
   SW2:
     access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 20}
     trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
@@ -134,9 +134,9 @@ switches:
   SW4:
     access: {GigabitEthernet0/1: 20, GigabitEthernet0/2: 30}
     trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
-  # SW5:
-  #   access: {GigabitEthernet0/1: 40, GigabitEthernet0/2: 30}
-  #   trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
+  SW5:
+    access: {GigabitEthernet0/1: 40, GigabitEthernet0/2: 30}
+    trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
 ```
 
 ## Suggested repository layout
@@ -169,12 +169,12 @@ Command line: `python vlan_tool.py --plan plan.yaml --inventory inventory.yaml [
 
 | ID | What | Expected |
 |---|---|---|
-| TC01 | Pre-check on SW1 to SW4 (SW5 if used) | All reachable over SSH |
+| TC01 | Pre-check on SW1 to SW5 | All reachable over SSH |
 | TC02 | `--dry-run` then `show vlan brief` | Commands printed, nothing changed |
 | TC03 | `show vlan brief` after run | VLANs 10, 20, 30, 40, 99 with correct names on every switch |
 | TC04 | `show interfaces GigabitEthernet0/x switchport` | Each PC port in its planned VLAN |
 | TC05 | `show interfaces trunk` | Every trunk allows 10, 20, 30, 40, 99 |
-| TC06 | Ping PC1 to PC3 (VLAN 10), PC2 to PC5 (VLAN 20); with SW5 also PC4 to PC7 (VLAN 40), PC6 to PC8 (VLAN 30) | All succeed |
+| TC06 | Ping PC1 to PC3 (VLAN 10), PC2 to PC5 (VLAN 20), PC6 to PC8 (VLAN 30), PC4 to PC7 (VLAN 40) | All succeed |
 | TC07 | Ping PC1 to PC2 (10 to 20), PC3 to PC4 (10 to 40), PC5 to PC6 (20 to 30) | All fail |
 | TC08 | report.json vs manual show output | They match |
 | TC09 | Plan with a port that does not exist on SW3 | SW3 changes undone, SW3 not saved, SSH still works |

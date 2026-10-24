@@ -4,5 +4,4 @@ SW1: {host: 192.168.99.11, device_type: cisco_ios}   # core
 SW2: {host: 192.168.99.12, device_type: cisco_ios}
 SW3: {host: 192.168.99.13, device_type: cisco_ios}
 SW4: {host: 192.168.99.14, device_type: cisco_ios}
-# SW5 is optional. Uncomment it together with SW5 (and SW1 Gi1/1) in plan.yaml.
-# SW5: {host: 192.168.99.15, device_type: cisco_ios}
+SW5: {host: 192.168.99.15, device_type: cisco_ios}
