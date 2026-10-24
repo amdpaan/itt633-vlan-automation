@@ -18,6 +18,7 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 - The project must not copy an existing project. If you use an idea or snippet from a tutorial or repository, say so in a comment and tell the user so it can be cited in the report.
 - Success must be proven on the network (show commands and pings), not only by the script finishing without errors.
 - Scope is fixed by the approved proposal. Do not add features outside the core list below unless the user asks. Flag anything that could break scope or the 8-week timeline.
+- Approved scope change (24 Oct 2026): after reviewing the proposal, the lecturer asked for a bigger topology: 4 to 5 switches (SW1 core, SW2 to SW4 access, SW5 optional) and a new VLAN 40 Finance. The network design below already reflects this. It is a lecturer request, not a scope risk; mention it in the report as the reason the design differs from the original three-switch proposal.
 
 ## Environment
 
