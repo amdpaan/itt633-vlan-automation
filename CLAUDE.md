@@ -194,6 +194,22 @@ Fully idempotent re-runs (skip ports already correct), roll back all switches to
 
 1 proposal; 2 lab and baseline; 3 environment and YAML files; 4 backup, planning, dry-run, apply; 5 verification and report; 6 rollback, error handling, integration; 7 run all tests and collect evidence; 8 report, slides, demo rehearsal. Week-6 checkpoint: if rollback still does not work, fall back to backup plus manual restore and say so honestly.
 
+## Code style: demo-first
+
+This code will be explained live to a lecturer by any of 4 students.
+
+- One function per tool step, named after it (precheck, backup, plan,
+  dry_run, apply, verify, save_or_rollback, write_report). main() should
+  read like the 9-step flow.
+- Print a progress line per step and switch, e.g. "[3/9] Backup SW2 ... OK".
+- Plain Python only: for/if, lists, dicts. No classes, decorators,
+  threads, async, or nested comprehensions.
+- Functions about 30 lines max. Comments explain WHY, not what.
+- Every regex has a comment with an example line it matches.
+- No hard-coded IPs/VLANs in code; they live in inventory.yaml/plan.yaml.
+- Must run on Python 3.9 and 3.14 (no 3.10+ only syntax).
+- Prefer the simpler option even if it is a little longer.
+
 ## How to work with the user
 
 - The user is Paan (Ahmad Farhan bin Ahmad Zahir), a networking student with little automation experience. Explain in plain English: what a change does and why, in one or two lines.
