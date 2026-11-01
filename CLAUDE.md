@@ -203,7 +203,7 @@ Fully idempotent re-runs (skip ports already correct), roll back all switches to
 - When a step needs the lab, write a short, numbered instruction sheet that Paan can forward to the friend. It should give the exact commands to run on each switch or on the automation host, and say what to save and how to name each file (for example `sw1_show_vlan_brief_real.txt`). Do not assume Paan can run or check anything in GNS3 directly.
 - Commit and push only when Paan asks. When asked to see the diff first, stage the changes, show the diff, and wait before committing.
 
-## Current status (handoff, last updated 24 Oct 2026)
+## Current status (handoff, last updated 2 Nov 2026)
 
 Read this section first in a new session. `git log` has the full history.
 
@@ -211,9 +211,10 @@ Read this section first in a new session. `git log` has the full history.
 
 - Manual baseline proven: it ran on SW1 to SW5 with no `%` errors. SW1 pings 192.168.99.12 to .15 at 100%. CDP on SW1 shows SW2 on Gi0/1, SW3 on Gi0/2, SW4 on Gi0/3 and SW5 on Gi1/1, each on remote Gi0/0.
 - The Python tool has **not** run on the lab yet (Windows SSH from the automation host is the next lab step).
-- Quirk: `show interfaces trunk` printed the "Vlans in spanning tree forwarding state and not pruned" section twice (Gi0/1 to Gi0/3, then Gi1/1 under a second header). `parse_trunk_allowed()` reads only the "Vlans allowed on trunk" section, so it is not affected. Regression test: `test_trunk_repeated_stp_header_iosvl2` on `tests/samples/transcribed/SW1_show_interfaces_trunk.txt` (typed from a screenshot, not a raw capture).
+- Quirk: `show interfaces trunk` printed the "Vlans in spanning tree forwarding state and not pruned" section twice (Gi0/1 to Gi0/3, then Gi1/1 under a second header). `parse_trunk_allowed()` reads only the "Vlans allowed on trunk" section, so it is not affected. Regression test: `test_trunk_repeated_stp_header_iosvl2` on `tests/samples/transcribed/SW1_show_interfaces_trunk.txt` (typed from a screenshot, not a raw capture). The raw SW1 capture in `tests/samples/real/` (2 Nov) does **not** show the repeated header; it has one clean header per section. Keep the transcribed test anyway.
 - Native VLAN is 1 on all trunks (baseline default). The tool does not touch the native VLAN.
-- Raw `.txt` captures (21 files) are still coming. Put them in `tests/samples/real/`, add tests against them, and only then update the "NOT YET VERIFIED" notes.
+- Raw baseline captures are in `tests/samples/real/` (2 Nov, 30 files: SW1 to SW5 x show vlan brief, show interfaces trunk, show interfaces switchport, show ip interface brief, show running-config, show version; passwords redacted). `tests/test_parsers_real.py` runs the parsers on all of them. `parse_vlan_brief` and `parse_trunk_allowed` worked unchanged; `parse_switchport_all()` was added because the all-ports output has 16 blocks per switch.
+- IOSvL2 finding: every unused port shows ` negotiation auto` in the running config, so `parse_interface_config()` will return `["negotiation auto"]` for a "blank" port, never `[]`. The undo then takes the "had settings" branch (default, then re-apply `negotiation auto`). Harmless, but `sw2_show_run_int_gi0_1_empty.txt` is unrealistic. Still needed from the lab: `show running-config interface GigabitEthernet0/1` on SW2, saved as `tests/samples/real/SW2_show_run_int_gi0_1.txt`.
 
 ### Done (tested with pytest on hand-written sample data only)
 
@@ -226,13 +227,13 @@ Read this section first in a new session. `git log` has the full history.
   - `plan_switch()`: reads the switch state and builds the change list.
   - `--dry-run` prints the commands and undo list per switch.
   - Credentials come from `input()` and `getpass`. They are never stored.
-- 42 pytest tests: `tests/test_parsers.py`, `tests/test_planning.py`, `tests/test_vlan_tool.py`.
+- 72 pytest tests: `tests/test_parsers.py`, `tests/test_parsers_real.py` (real IOSvL2 baseline output, 30 tests), `tests/test_planning.py`, `tests/test_vlan_tool.py`.
   - `tests/test_vlan_tool.py` replaces Netmiko's `ConnectHandler` with a `FakeSwitch` class that answers with the sample files. SW3 to SW5 reuse SW2's samples.
   - To try a dry-run without switches, patch `vlan_tool.ConnectHandler`, `vlan_tool.ask_credentials` and `vlan_tool.BACKUP_DIR` the same way.
 
 ### Not done yet (in timeline order)
 
-1. GNS3 lab (run by Paan's friend, not Paan): baseline is done (see Lab status); next is SSH from the automation host, then TC01 and TC02. Put the raw IOSvL2 captures into `tests/samples/real/`, add tests, fix the parsers if needed, then update the "NOT YET VERIFIED" notes in `parsers.py`, the test files and `tests/samples/README.md`.
+1. GNS3 lab (run by Paan's friend, not Paan): baseline is done (see Lab status); next is SSH from the automation host, then TC01 and TC02. Baseline captures are in and tested; still to capture: `show running-config interface <port>` and the show outputs after a run (VLANs 10 to 40 present).
 2. Step 3, second half: `copy running-config flash:pre_change.cfg` on each switch, handling the confirmation prompt. This was left out on purpose so far, so that `--dry-run` writes nothing to the switches. Decide with Paan whether the flash copy runs in dry-run mode.
 3. Step 6: apply with `send_config_set`, and treat `% Invalid input`, `% Incomplete command` and `% Ambiguous command` in the output as a failure.
 4. Step 7: verify against plan.yaml, using `parse_switchport()` for the access ports.
@@ -241,7 +242,7 @@ Read this section first in a new session. `git log` has the full history.
 
 ### Still unverified or assumed
 
-- The tool has not run on real IOSvL2 (only the manual baseline has). The samples in `tests/samples/` are hand-written, except `transcribed/`, which is typed from a real screenshot.
+- The tool has not run on real IOSvL2 (only the manual baseline has). The samples directly in `tests/samples/` are hand-written; `real/` holds raw baseline captures and `transcribed/` is typed from a real screenshot. `parse_interface_config()` is still unverified.
 - Assumed and not yet confirmed by the group:
   - The VLAN 40 subnet is 192.168.40.0/24.
   - The automation host stays on SW1 GigabitEthernet1/0.

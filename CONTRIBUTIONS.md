@@ -11,3 +11,4 @@ Each member adds a row for their own work. Mark AI-assisted work with "(AI-assis
 | 2026-10-24 | Ahmad Farhan | New topology: SW1 core + SW2-SW4 access (SW5 optional), VLAN 40 Finance; updated plan, inventory, samples and tests (AI-assisted) | plan.yaml, inventory.yaml, tests/ |
 | 2026-10-24 | Ahmad Farhan | SW5 enabled after lab RAM test (5 switches, 8 access ports, 4 trunk links); plan, inventory, samples, tests and docs updated (AI-assisted) | plan.yaml, inventory.yaml, tests/ |
 | 2026-10-24 | Ahmad Farhan | Regression test for IOSvL2 repeated STP section in `show interfaces trunk` (transcribed sample); lab status notes in CLAUDE.md (AI-assisted) | tests/samples/transcribed/, tests/test_parsers.py |
+| 2026-11-02 | Ahmad Farhan | Tests on real IOSvL2 baseline captures from SW1-SW5 (30 tests); new `parse_switchport_all()` for all-ports switchport output (AI-assisted) | tests/samples/real/, tests/test_parsers_real.py, parsers.py |

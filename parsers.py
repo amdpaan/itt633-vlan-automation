@@ -1,10 +1,15 @@
 """Turn Cisco "show" output (plain text) into Python data.
 
-STATUS: NOT YET VERIFIED ON IOSvL2.
-These parsers were written against typical Cisco IOS output. The sample
-files in tests/samples/ are hand-written, not captured from our switches.
-Before trusting them, save real output from the IOSvL2 switches into
-tests/samples/ and re-run pytest.
+STATUS (2 Nov 2026):
+- Tested on real IOSvL2 15.2 baseline output from SW1 to SW5
+  (tests/samples/real/, tests/test_parsers_real.py):
+  parse_vlan_brief, parse_trunk_allowed, parse_switchport_all
+  (and parse_switchport, which it uses on each port's block).
+- NOT YET VERIFIED: parse_interface_config. No real
+  'show running-config interface <port>' capture yet. Note: on IOSvL2 an
+  unused port still shows ' negotiation auto', so a "blank" port is not [].
+- Real output so far is the baseline only (VLANs 1 and 99). Output after
+  the tool adds VLANs 10-40 has not been captured yet.
 
 Nothing in this file talks to a switch, so it can be tested on the Mac.
 """
@@ -134,6 +139,24 @@ def parse_switchport(output):
             # Value looks like '30 (Guest)'; keep only the number.
             result["access_vlan"] = int(value.split()[0])
     return result
+
+
+def parse_switchport_all(output):
+    """Parse 'show interfaces switchport' (every port in one output).
+
+    Each port's block starts with a 'Name: Gi0/1' line. Each block is read
+    with parse_switchport(). Returns a dict keyed by full port name:
+        {"GigabitEthernet0/1": {"admin_mode": "trunk", "oper_mode": "trunk", "access_vlan": 1}, ...}
+    """
+    blocks = {}
+    port = None
+    for line in output.splitlines():
+        if line.startswith("Name:"):
+            port = full_interface_name(line.split(":", 1)[1])
+            blocks[port] = []
+        elif port is not None:
+            blocks[port].append(line)
+    return {port: parse_switchport("\n".join(lines)) for port, lines in blocks.items()}
 
 
 def parse_interface_config(output):
