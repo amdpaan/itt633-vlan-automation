@@ -7,10 +7,12 @@ The flash copy prompts and the canned config output below are guesses from
 normal IOS behaviour, not captured from our switches.
 """
 
+import json
 import os
 from unittest import mock
 
 import pytest
+import yaml
 from netmiko import NetmikoAuthenticationException, NetmikoTimeoutException
 
 import vlan_tool
@@ -103,11 +105,24 @@ class FakeSwitch:
         self.disconnected = True
 
 
+# Easy to search for: it must never appear in a report or a log.
+PASSWORD = "S3cret-pw!"
+
+
+@pytest.fixture(autouse=True)
+def output_dirs(tmp_path, monkeypatch):
+    """Every test writes backups, reports and logs into tmp_path, never the repo."""
+    monkeypatch.setattr(vlan_tool, "BACKUP_DIR", str(tmp_path / "backups"))
+    monkeypatch.setattr(vlan_tool, "REPORT_DIR", str(tmp_path / "reports"))
+    monkeypatch.setattr(vlan_tool, "LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(vlan_tool, "LOG_PATH", None)
+
+
 @pytest.fixture
 def switches(tmp_path, monkeypatch):
     """Patch Netmiko and the login prompt. Returns {host: FakeSwitch}."""
     monkeypatch.setattr(vlan_tool, "BACKUP_DIR", str(tmp_path / "backups"))
-    monkeypatch.setattr(vlan_tool, "ask_credentials", lambda: ("admin", "secret"))
+    monkeypatch.setattr(vlan_tool, "ask_credentials", lambda: ("admin", PASSWORD))
     fakes = {}
 
     def fake_connect(host, **kwargs):
@@ -160,7 +175,7 @@ def test_connect_all_refuses_user_mode_prompt(monkeypatch):
 def test_unreachable_switch_stops_before_any_change(tmp_path, monkeypatch, capsys):
     """Like TC10: wrong SW3 IP stops at pre-check, nothing is read or changed."""
     monkeypatch.setattr(vlan_tool, "BACKUP_DIR", str(tmp_path / "backups"))
-    monkeypatch.setattr(vlan_tool, "ask_credentials", lambda: ("admin", "secret"))
+    monkeypatch.setattr(vlan_tool, "ask_credentials", lambda: ("admin", PASSWORD))
     fakes = {}
 
     def fake_connect(host, **kwargs):
@@ -575,7 +590,7 @@ def test_flash_copy_failure_skips_rollback(capsys):
     fake = FakeSwitch("192.168.99.12")
     fake.flash_replies = ["%Error opening flash:pre_change.cfg (No such device)\nSW#"]
     plan = load_yaml(os.path.join(PROJECT_DIR, "plan.yaml"))
-    status = vlan_tool.run_switch(fake, "SW2", plan, ["vlan 10"], ["no vlan 10"])
+    status = vlan_tool.run_switch(fake, "SW2", plan, ["vlan 10"], ["no vlan 10"], vlan_tool.new_record("SW2", "x"))
     assert status == "NOT_CHANGED"
     assert fake.config_sent == []
     assert "Rollback SW2 ... SKIPPED" in capsys.readouterr().out
@@ -586,7 +601,7 @@ def test_verified_but_not_saved(capsys):
     fake.after_config = synthetic_after("SW2").outputs
     fake.save_output = "write memory\nSW#"
     plan = load_yaml(os.path.join(PROJECT_DIR, "plan.yaml"))
-    status = vlan_tool.run_switch(fake, "SW2", plan, ["vlan 10"], ["no vlan 10"])
+    status = vlan_tool.run_switch(fake, "SW2", plan, ["vlan 10"], ["no vlan 10"], vlan_tool.new_record("SW2", "x"))
     assert status == "NOT_SAVED"
     assert fake.config_sent == [["vlan 10"], "write memory"]   # no undo after a verified run
     assert "SW2 verified but NOT saved" in capsys.readouterr().out
@@ -618,6 +633,171 @@ def test_main_sw1_saved_sw2_rolled_back(switches, monkeypatch, capsys):
     for host in ["192.168.99.13", "192.168.99.14", "192.168.99.15"]:
         assert switches[host].config_sent == []
         assert switches[host].timing_sent == []
+
+
+# ---------- Step 9: report and log ----------
+
+def read_report(tmp_path):
+    """Load the one report written by the run."""
+    files = os.listdir(tmp_path / "reports")
+    assert len(files) == 1
+    with open(tmp_path / "reports" / files[0]) as f:
+        return json.load(f)
+
+
+def read_log(tmp_path):
+    files = os.listdir(tmp_path / "logs")
+    assert len(files) == 1
+    with open(tmp_path / "logs" / files[0]) as f:
+        return f.read()
+
+
+def statuses_in(report):
+    return [(entry["name"], entry["status"]) for entry in report["switches"]]
+
+
+def sw1_passes(monkeypatch):
+    """SW1 shows the SYNTHETIC post-apply state once config is sent; the
+    other switches keep showing the baseline (so SW2 fails verify)."""
+    original_connect = vlan_tool.ConnectHandler
+
+    def connect_with_good_sw1(host, **kwargs):
+        fake = original_connect(host, **kwargs)
+        if host == "192.168.99.11":
+            fake.after_config = synthetic_after("SW1").outputs
+        return fake
+
+    monkeypatch.setattr(vlan_tool, "ConnectHandler", connect_with_good_sw1)
+
+
+def test_report_precheck_failure(switches, monkeypatch, tmp_path):
+    original_connect = vlan_tool.ConnectHandler
+
+    def connect_sw3_down(host, **kwargs):
+        if host == "192.168.99.13":
+            raise NetmikoTimeoutException("timed out")
+        return original_connect(host, **kwargs)
+
+    monkeypatch.setattr(vlan_tool, "ConnectHandler", connect_sw3_down)
+    with pytest.raises(SystemExit):
+        vlan_tool.main(ARGS)
+
+    report = read_report(tmp_path)
+    assert statuses_in(report) == [("SW1", "NOT_RUN"), ("SW2", "NOT_RUN"), ("SW3", "UNREACHABLE"),
+                                   ("SW4", "NOT_RUN"), ("SW5", "NOT_RUN")]
+    assert "cannot reach 192.168.99.13" in report["switches"][2]["error_lines"][0]
+    assert report["stop_reason"] == "pre-check failed"
+    assert report["dry_run"] is False
+
+
+def test_report_dry_run(switches, tmp_path, capsys):
+    vlan_tool.main(ARGS + ["--dry-run"])
+    report = read_report(tmp_path)
+
+    assert report["dry_run"] is True
+    assert report["stop_reason"] == "dry run"
+    assert report["plan_file"] == "plan.yaml"
+    assert statuses_in(report) == [("SW%d" % n, "NOT_CHANGED") for n in range(1, 6)]
+    sw1 = report["switches"][0]
+    assert sw1["ip"] == "192.168.99.11"
+    assert sw1["commands_sent"] == []                  # nothing was sent
+    assert "switchport trunk allowed vlan add 10,20,30,40" in sw1["planned_commands"]
+    assert sw1["undo_list"][-1] == "no vlan 10"
+    assert sw1["backup_file"].endswith(".cfg")
+    assert "[9/9] Report saved: " in capsys.readouterr().out
+
+
+def test_report_rollback_stop(switches, monkeypatch, tmp_path):
+    sw1_passes(monkeypatch)
+    with pytest.raises(SystemExit):
+        vlan_tool.main(ARGS)
+
+    report = read_report(tmp_path)
+    assert statuses_in(report) == [("SW1", "SAVED"), ("SW2", "ROLLED_BACK"), ("SW3", "NOT_RUN"),
+                                   ("SW4", "NOT_RUN"), ("SW5", "NOT_RUN")]
+    assert report["stop_reason"] == "stopped at SW2 (ROLLED_BACK)"
+    sw1, sw2 = report["switches"][0], report["switches"][1]
+    assert sw1["mismatches"] == []
+    assert "VLAN 10 missing" in sw2["mismatches"]      # why verify failed
+    # Apply commands first, then the undo list that rolled them back.
+    assert sw2["commands_sent"] == sw2["planned_commands"] + sw2["undo_list"]
+    assert report["switches"][2]["commands_sent"] == []
+
+
+def test_report_full_pass(switches, monkeypatch, tmp_path):
+    """All five switches pass. The synthetic post-apply files exist only for
+    SW1 and SW2, so this test uses a copy of plan.yaml where SW3 to SW5 have
+    SW2's access ports, and SW3 to SW5 answer with SW2's synthetic files."""
+    plan = load_yaml(os.path.join(PROJECT_DIR, "plan.yaml"))
+    for switch in ["SW3", "SW4", "SW5"]:
+        plan["switches"][switch]["access"] = dict(plan["switches"]["SW2"]["access"])
+    plan_path = tmp_path / "plan_all_like_sw2.yaml"
+    plan_path.write_text(yaml.safe_dump(plan))
+
+    original_connect = vlan_tool.ConnectHandler
+
+    def connect_all_pass(host, **kwargs):
+        fake = original_connect(host, **kwargs)
+        fake.after_config = synthetic_after("SW1" if host == "192.168.99.11" else "SW2").outputs
+        return fake
+
+    monkeypatch.setattr(vlan_tool, "ConnectHandler", connect_all_pass)
+    vlan_tool.main(["--plan", str(plan_path), "--inventory", ARGS[3]])   # no SystemExit
+
+    report = read_report(tmp_path)
+    assert statuses_in(report) == [("SW%d" % n, "SAVED") for n in range(1, 6)]
+    assert report["stop_reason"] == "completed"
+    for entry in report["switches"]:
+        assert entry["mismatches"] == [] and entry["error_lines"] == []
+        assert entry["commands_sent"] == entry["planned_commands"]
+
+
+def test_report_unexpected_error(switches, monkeypatch, tmp_path):
+    """SSH drops in the middle of apply: the report is still written."""
+    original_connect = vlan_tool.ConnectHandler
+
+    def connect_sw1_drops(host, **kwargs):
+        fake = original_connect(host, **kwargs)
+        if host == "192.168.99.11":
+            def drop(commands):
+                raise OSError("Socket is closed")
+            fake.send_config_set = drop
+        return fake
+
+    monkeypatch.setattr(vlan_tool, "ConnectHandler", connect_sw1_drops)
+    with pytest.raises(OSError):
+        vlan_tool.main(ARGS)
+    report = read_report(tmp_path)
+    assert report["stop_reason"] == "unexpected error: Socket is closed"
+    # SW1 may be half-changed, so the report must not call it NOT_RUN.
+    assert statuses_in(report) == [("SW1", "IN_PROGRESS"), ("SW2", "NOT_RUN"), ("SW3", "NOT_RUN"),
+                                   ("SW4", "NOT_RUN"), ("SW5", "NOT_RUN")]
+
+
+def test_password_never_in_report_or_log(switches, monkeypatch, tmp_path):
+    sw1_passes(monkeypatch)
+    with pytest.raises(SystemExit):
+        vlan_tool.main(ARGS)
+
+    with open(os.path.join(tmp_path, "reports", os.listdir(tmp_path / "reports")[0])) as f:
+        report_text = f.read()
+    log_text = read_log(tmp_path)
+    assert PASSWORD not in report_text
+    assert PASSWORD not in log_text
+    # The running config (password hash) stays in backups/ only, never in the log.
+    assert "hostname fake-" not in log_text
+    # The log holds the progress lines AND the raw device output (TC08).
+    assert "[6/9] Apply SW1 ... OK" in log_text
+    assert "----- show interfaces switchport -----" in log_text
+    assert "----- rollback: send_config_set -----" in log_text
+    assert "[9/9] Report saved: " in log_text
+
+
+def test_two_runs_never_overwrite(switches, tmp_path):
+    vlan_tool.main(ARGS + ["--dry-run"])
+    vlan_tool.main(ARGS + ["--dry-run"])     # very likely the same second
+    assert len(os.listdir(tmp_path / "reports")) == 2
+    assert len(os.listdir(tmp_path / "logs")) == 2
 
 
 def test_password_is_asked_with_getpass():

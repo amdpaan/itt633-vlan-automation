@@ -184,7 +184,7 @@ Command line: `python vlan_tool.py --plan plan.yaml --inventory inventory.yaml [
 
 ## report.json content
 
-Per run: timestamp, mode (dry-run or apply), and per switch: status (SAVED, NOT_SAVED, ROLLED_BACK, ROLLBACK_INCOMPLETE, NOT_CHANGED, NOT_RUN, UNREACHABLE; the `run_switch()` names used directly, no mapping, decided with Paan 2 Nov), commands sent, undo list, mismatches found, whether it was saved, and seconds taken for each step. Keep it flat and easy to read; it is evidence for Chapter 4.
+Per run: timestamp, mode (dry-run or apply), and per switch: status (SAVED, NOT_SAVED, ROLLED_BACK, ROLLBACK_INCOMPLETE, NOT_CHANGED, NOT_RUN, UNREACHABLE, IN_PROGRESS; the `run_switch()` names used directly, no mapping, decided with Paan 2 Nov; IN_PROGRESS = interrupted mid-change: check by hand, restore flash:pre_change.cfg if needed), commands sent, undo list, mismatches found, whether it was saved, and seconds taken for each step. Keep it flat and easy to read; it is evidence for Chapter 4.
 
 ## Stretch goals (only if the core works by week 8 and the user asks)
 
@@ -237,7 +237,7 @@ Read this section first in a new session. `git log` has the full history.
 - Image moved to IOSvL2 15.2; all names are `GigabitEthernet0/x`. Five-switch topology with VLAN 40 is in `inventory.yaml`, `plan.yaml`, the samples and the tests.
 - `parsers.py`: `show vlan brief`, `show interfaces trunk`, `show interfaces <port> switchport`, `show running-config interface <port>`.
 - `planning.py`: `validate_plan()` (safety rules) and `build_changes()` (commands + undo list).
-- `vlan_tool.py` steps 1 to 8:
+- `vlan_tool.py` steps 1 to 9 (all steps written):
   - `connect_all()`: SSH pre-check that stops if any switch fails, and checks for the `#` prompt (privilege 15).
   - `backup_switch()`: saves `show running-config` to `backups/<switch>_<timestamp>.cfg` and captures each planned access port's config.
   - `plan_switch()`: reads the switch state and builds the change list.
@@ -249,15 +249,22 @@ Read this section first in a new session. `git log` has the full history.
   - `run_switch()` returns SAVED, NOT_SAVED (verified but `[OK]` missing; no rollback), ROLLED_BACK, ROLLBACK_INCOMPLETE or NOT_CHANGED (apply's `sent` is False, e.g. flash copy failed; rollback skipped). `main()` stops at the first non-SAVED switch and prints `Summary: saved ... | rolled back ... | untouched ...`. report.json uses these names directly (no mapping).
   - **The lab still runs `--dry-run` only** (decided with Paan, 2 Nov, after step 8 was written). The first real run is decided after the first dry-run result comes back from the lab.
   - Undo for a PC port on IOSvL2 = `default interface <port>`, `interface <port>`, `negotiation auto` (back to dynamic auto, VLAN 1). Not yet run on IOSvL2.
-- 112 pytest tests: `tests/test_parsers.py`, `tests/test_parsers_real.py` (real IOSvL2 baseline output, 30 tests), `tests/test_planning.py`, `tests/test_vlan_tool.py`.
+  - Step 9: `write_report()` writes `reports/report_<YYYYmmdd_HHMMSS>.json` on every ending (pre-check fail, step-4 unsafe-state stop, dry-run, rollback stop, full pass, unexpected error) from `main()`'s `finally`. Top level: started, finished, total_seconds, dry_run, plan_file, stop_reason. Per switch, in inventory order: name, ip, status, seconds, commands_sent (apply then undo, only what really reached the switch), mismatches, error_lines, backup_file, planned_commands, undo_list. Dry-run = NOT_CHANGED for all; pre-check fail = UNREACHABLE (reason in error_lines) + NOT_RUN. `new_run_name()` adds `_2`, `_3` when two runs share a second. `run_switch()` sets IN_PROGRESS before apply (before the flash copy); a normal return overwrites it, so only a crash (e.g. SSH drops) leaves IN_PROGRESS in the report, with the error in `stop_reason`.
+  - Log: `say()` prints and appends to `logs/run_<same timestamp>.log`; `log_output()` adds raw device output (show commands via `show()`, flash copy, send_config_set for apply and undo, write memory) to the log only. `show running-config` is never logged (password hash); it stays in `backups/`. No username or password goes into the report or the log.
+  - `main()` is about 94 lines (over the 30-line guideline). It is the first item of the simplicity pass below.
+- 119 pytest tests: `tests/test_parsers.py`, `tests/test_parsers_real.py` (real IOSvL2 baseline output, 30 tests), `tests/test_planning.py`, `tests/test_vlan_tool.py`.
   - `tests/test_vlan_tool.py` replaces Netmiko's `ConnectHandler` with a `FakeSwitch` class that answers with the sample files. SW3 to SW5 reuse SW2's samples.
-  - To try a dry-run without switches, patch `vlan_tool.ConnectHandler`, `vlan_tool.ask_credentials` and `vlan_tool.BACKUP_DIR` the same way.
+  - To try a dry-run without switches, patch `vlan_tool.ConnectHandler`, `vlan_tool.ask_credentials` and `vlan_tool.BACKUP_DIR`, `REPORT_DIR`, `LOG_DIR` the same way (the autouse `output_dirs` fixture does this for every test, so tests never write into the repo).
 
 ### Not done yet (in timeline order)
 
 1. GNS3 lab (run by Paan's friend, not Paan): baseline is done (see Lab status); next is SSH from the automation host, then TC01 and TC02. Baseline captures are in and tested; still to capture: `show running-config interface <port>` and the show outputs after a run (VLANs 10 to 40 present).
 2. Lab check for step 6: capture the real `copy running-config flash:pre_change.cfg` output (first run and second run, when the file exists) to confirm the prompts and the "bytes copied" line.
-3. Step 9: `reports/report_<timestamp>.json` (fields listed in "report.json content" above) and a log file in `logs/`.
+3. First lab dry-run (TC02) with the full tool; then decide the first real run with Paan.
+
+### Simplicity pass (to do, items in order)
+
+1. Split `main()` so it reads like the 9-step flow (it is about 94 lines; the guideline is about 30).
 
 ### Still unverified or assumed
 

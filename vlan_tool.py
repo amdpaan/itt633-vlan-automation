@@ -3,16 +3,17 @@
 Usage:
     python vlan_tool.py --plan plan.yaml --inventory inventory.yaml [--dry-run]
 
-STATUS: steps 1 to 8 are written (load, pre-check, backup, build changes,
-dry-run, apply, verify, save or roll back). They are tested with pytest
-using fake switches only, NOT on IOSvL2 in GNS3 yet. Step 9 (report.json
-and log file) is still TODO.
+STATUS: all 9 steps are written (load, pre-check, backup, build changes,
+dry-run, apply, verify, save or roll back, report). They are tested with
+pytest using fake switches only, NOT on IOSvL2 in GNS3 yet.
 """
 
 import argparse
 import getpass
+import json
 import os
 import sys
+import time
 from datetime import datetime
 
 from netmiko import (
@@ -40,6 +41,37 @@ BACKUP_DIR = "backups"
 
 # Any of these in send_config_set output means IOS rejected a command.
 IOS_ERRORS = ["% Invalid input", "% Incomplete command", "% Ambiguous command"]
+
+
+REPORT_DIR = "reports"
+LOG_DIR = "logs"
+LOG_PATH = None   # set once in main(); say() also writes here when set
+
+
+def say(line):
+    """Print a progress line AND append it to the run's log file."""
+    print(line)
+    if LOG_PATH is not None:
+        with open(LOG_PATH, "a") as f:
+            f.write(line + "\n")
+
+
+def log_output(title, text):
+    """Raw device output goes to the log only (TC08 evidence), not the screen."""
+    if LOG_PATH is not None:
+        with open(LOG_PATH, "a") as f:
+            f.write(f"----- {title} -----\n{text}\n----- end -----\n")
+
+
+def show(conn, command):
+    """Run a show command and keep its raw output in the log.
+
+    Not used for 'show running-config': it holds the password hash, and the
+    backup file already keeps it.
+    """
+    output = conn.send_command(command)
+    log_output(command, output)
+    return output
 
 
 def parse_args(argv=None):
@@ -123,24 +155,24 @@ def backup_switch(switch, connection, ports, timestamp):
 
 def plan_switch(switch, connection, plan, port_configs):
     """Read the switch's current VLANs and trunks, then build commands + undo list."""
-    current_vlans = parse_vlan_brief(connection.send_command("show vlan brief"))
-    current_trunks = parse_trunk_allowed(connection.send_command("show interfaces trunk"))
+    current_vlans = parse_vlan_brief(show(connection, "show vlan brief"))
+    current_trunks = parse_trunk_allowed(show(connection, "show interfaces trunk"))
     return build_changes(switch, plan, current_vlans, current_trunks, port_configs)
 
 
 # ---------- Step 5: dry-run output ----------
 
 def print_changes(switch, commands, undo):
-    print(f"\n=== {switch} ===")
+    say(f"\n=== {switch} ===")
     if not commands:
-        print("Nothing to change.")
+        say("Nothing to change.")
         return
-    print("Commands:")
+    say("Commands:")
     for line in commands:
-        print("  " + line)
-    print("Undo list (runs only if verification fails):")
+        say("  " + line)
+    say("Undo list (runs only if verification fails):")
     for line in undo:
-        print("  " + line)
+        say("  " + line)
 
 
 # ---------- Step 6: apply ----------
@@ -181,23 +213,25 @@ def apply(conn, switch_name, commands):
     # No flash backup = stop before sending anything.
     # "bytes copied" is the normal IOS success line (NOT yet seen on our IOSvL2).
     copy_output = copy_to_flash(conn)
+    log_output("copy running-config flash:pre_change.cfg", copy_output)
     copy_error = find_ios_error(copy_output, ["%Error"])
     if copy_error or "bytes copied" not in copy_output:
         result["output"] = copy_output
         result["error_line"] = "flash copy failed: " + (copy_error or "no 'bytes copied' line")
-        print(f"[6/9] Apply {switch_name} ... FAILED ({result['error_line']})")
+        say(f"[6/9] Apply {switch_name} ... FAILED ({result['error_line']})")
         return result
 
     if commands:
         result["output"] = conn.send_config_set(commands)
         result["sent"] = True
+        log_output("apply: send_config_set", result["output"])
     result["error_line"] = find_ios_error(result["output"], IOS_ERRORS)
     result["ok"] = result["error_line"] == ""
 
     if result["ok"]:
-        print(f"[6/9] Apply {switch_name} ... OK ({len(commands)} commands)")
+        say(f"[6/9] Apply {switch_name} ... OK ({len(commands)} commands)")
     else:
-        print(f"[6/9] Apply {switch_name} ... FAILED ({result['error_line']})")
+        say(f"[6/9] Apply {switch_name} ... FAILED ({result['error_line']})")
     return result
 
 
@@ -277,9 +311,9 @@ def verify(conn, switch_name, switch_plan, planned_vlans):
 
     Returns {"ok": True/False, "mismatches": [text, ...]}.
     """
-    vlans = parse_vlan_brief(conn.send_command("show vlan brief"))
-    trunks = parse_trunk_allowed(conn.send_command("show interfaces trunk"))
-    switchports = parse_switchport_all(conn.send_command("show interfaces switchport"))
+    vlans = parse_vlan_brief(show(conn, "show vlan brief"))
+    trunks = parse_trunk_allowed(show(conn, "show interfaces trunk"))
+    switchports = parse_switchport_all(show(conn, "show interfaces switchport"))
 
     mismatches = []
     mismatches.extend(check_vlans(planned_vlans, vlans))
@@ -289,11 +323,11 @@ def verify(conn, switch_name, switch_plan, planned_vlans):
 
     ok = mismatches == []
     if ok:
-        print(f"[7/9] Verify {switch_name} ... OK")
+        say(f"[7/9] Verify {switch_name} ... OK")
     else:
-        print(f"[7/9] Verify {switch_name} ... FAILED ({len(mismatches)} mismatches)")
+        say(f"[7/9] Verify {switch_name} ... FAILED ({len(mismatches)} mismatches)")
         for mismatch in mismatches:
-            print("  - " + mismatch)
+            say("  - " + mismatch)
     return {"ok": ok, "mismatches": mismatches}
 
 
@@ -361,9 +395,9 @@ def check_rollback(conn, switch_name, undo_commands):
     Returns a list of mismatch strings (empty = rollback complete).
     """
     vlan_ids, trunk_vlans, ports = undo_targets(undo_commands)
-    vlans = parse_vlan_brief(conn.send_command("show vlan brief"))
-    trunks = parse_trunk_allowed(conn.send_command("show interfaces trunk"))
-    switchports = parse_switchport_all(conn.send_command("show interfaces switchport"))
+    vlans = parse_vlan_brief(show(conn, "show vlan brief"))
+    trunks = parse_trunk_allowed(show(conn, "show interfaces trunk"))
+    switchports = parse_switchport_all(show(conn, "show interfaces switchport"))
 
     mismatches = []
     for vlan_id in vlan_ids:
@@ -382,7 +416,8 @@ def check_rollback(conn, switch_name, undo_commands):
 
 def rollback(conn, switch_name, undo_commands):
     """Send the undo list (running config only, never saved) and check the result."""
-    result = {"ok": False, "action": "rollback", "output": "", "error_lines": [], "mismatches": []}
+    result = {"ok": False, "action": "rollback", "output": "", "error_lines": [], "mismatches": [],
+              "sent": False}
     unsafe = unsafe_undo_lines(switch_name, undo_commands)
     if unsafe:
         # Send NO undo at all: a half-sent undo list is worse than none.
@@ -391,17 +426,19 @@ def rollback(conn, switch_name, undo_commands):
         # One batch: IOS keeps going after a % line (e.g. "no vlan 40" when
         # apply stopped before creating VLAN 40), so every undo line runs.
         result["output"] = conn.send_config_set(undo_commands)
+        result["sent"] = True
+        log_output("rollback: send_config_set", result["output"])
         result["error_lines"] = find_all_percent_lines(result["output"])
         result["mismatches"] = check_rollback(conn, switch_name, undo_commands)
     result["ok"] = result["mismatches"] == []
 
-    print(f"[8/9] Rollback {switch_name} ... {'OK' if result['ok'] else 'INCOMPLETE'}")
+    say(f"[8/9] Rollback {switch_name} ... {'OK' if result['ok'] else 'INCOMPLETE'}")
     for line in result["error_lines"]:
-        print("  IOS said: " + line)
+        say("  IOS said: " + line)
     for mismatch in result["mismatches"]:
-        print("  - " + mismatch)
+        say("  - " + mismatch)
     if not result["ok"]:
-        print(f"ROLLBACK INCOMPLETE on {switch_name}: restore flash:pre_change.cfg by hand")
+        say(f"ROLLBACK INCOMPLETE on {switch_name}: restore flash:pre_change.cfg by hand")
     return result
 
 
@@ -413,32 +450,49 @@ def save_or_rollback(conn, switch_name, passed, undo_commands):
     # "[OK]" is the normal IOS line after write memory
     # (NOT yet seen through Netmiko on our IOSvL2).
     output = conn.save_config()
+    log_output("write memory", output)
     ok = "[OK]" in output
-    print(f"[8/9] Save {switch_name} ... {'OK' if ok else 'FAILED'}")
+    say(f"[8/9] Save {switch_name} ... {'OK' if ok else 'FAILED'}")
     return {"ok": ok, "action": "save", "output": output, "error_lines": [], "mismatches": []}
 
 
-def run_switch(conn, switch_name, plan, commands, undo_commands):
-    """Steps 6 to 8 for one switch. Returns its status:
-    SAVED, NOT_SAVED, ROLLED_BACK, ROLLBACK_INCOMPLETE or NOT_CHANGED.
+def add_to_record(record, result, commands):
+    """Copy what one step did into the switch's report.json entry."""
+    if result.get("sent"):
+        record["commands_sent"].extend(commands)
+    if result.get("error_line"):
+        record["error_lines"].append(result["error_line"])
+    record["error_lines"].extend(result.get("error_lines", []))
+    record["mismatches"].extend(result.get("mismatches", []))
+
+
+def run_switch(conn, switch_name, plan, commands, undo_commands, record):
+    """Steps 6 to 8 for one switch. Fills record (for report.json) and returns
+    its status: SAVED, NOT_SAVED, ROLLED_BACK, ROLLBACK_INCOMPLETE or NOT_CHANGED.
     """
+    # Overwritten when this function returns, so only a crash leaves it in the report.
+    record["status"] = "IN_PROGRESS"
     applied = apply(conn, switch_name, commands)
+    add_to_record(record, applied, commands)
     passed = applied["ok"]
     if passed:
         switch_plan = plan["switches"][switch_name] or {}
-        passed = verify(conn, switch_name, switch_plan, plan["vlans"])["ok"]
+        checked = verify(conn, switch_name, switch_plan, plan["vlans"])
+        add_to_record(record, checked, [])
+        passed = checked["ok"]
 
     if not passed and not applied["sent"]:
         # e.g. the flash copy failed: nothing reached the switch, nothing to undo.
-        print(f"[8/9] Rollback {switch_name} ... SKIPPED (nothing was sent)")
+        say(f"[8/9] Rollback {switch_name} ... SKIPPED (nothing was sent)")
         return "NOT_CHANGED"
 
     outcome = save_or_rollback(conn, switch_name, passed, undo_commands)
+    add_to_record(record, outcome, undo_commands)
     if passed and outcome["ok"]:
         return "SAVED"
     if passed:
         # Running config is correct but not saved; a reload would lose it.
-        print(f"{switch_name} verified but NOT saved")
+        say(f"{switch_name} verified but NOT saved")
         return "NOT_SAVED"
     if outcome["ok"]:
         return "ROLLED_BACK"
@@ -461,83 +515,171 @@ def print_summary(switch_names, statuses):
             rolled_back.append(switch)
         else:
             attention.append(f"{switch} {status}")
-    print(f"\nSummary: saved {', '.join(saved) or 'none'}"
+    say(f"\nSummary: saved {', '.join(saved) or 'none'}"
           f" | rolled back {', '.join(rolled_back) or 'none'}"
           f" | untouched {', '.join(untouched) or 'none'}")
     if attention:
-        print("Needs attention: " + ", ".join(attention))
+        say("Needs attention: " + ", ".join(attention))
+
+
+# ---------- Step 9: report ----------
+
+def new_run_name(started):
+    """Timestamp for this run's backup, report and log names: 20261102_140311.
+
+    Two runs in the same second get _2, _3 ... so no run overwrites another.
+    """
+    base = started.strftime("%Y%m%d_%H%M%S")
+    name = base
+    number = 2
+    while (os.path.exists(os.path.join(LOG_DIR, f"run_{name}.log"))
+           or os.path.exists(os.path.join(REPORT_DIR, f"report_{name}.json"))):
+        name = f"{base}_{number}"
+        number += 1
+    return name
+
+
+def new_record(name, ip):
+    """One switch's entry in report.json. Every switch starts as NOT_RUN."""
+    return {
+        "name": name,
+        "ip": ip,
+        "status": "NOT_RUN",
+        "seconds": 0.0,
+        "commands_sent": [],       # what really reached the switch (apply, then undo)
+        "mismatches": [],          # from verify, and from the rollback check
+        "error_lines": [],         # IOS % lines, or why the switch failed
+        "backup_file": None,
+        "planned_commands": [],    # what the tool planned (dry-run evidence, TC02)
+        "undo_list": [],
+    }
+
+
+def write_report(timestamp, started, dry_run, plan_file, stop_reason, records):
+    """Step 9: save reports/report_<timestamp>.json (evidence for Chapter 4).
+
+    It holds only the records built during the run, never the username or password.
+    """
+    finished = datetime.now()
+    report = {
+        "started": started.isoformat(timespec="seconds"),
+        "finished": finished.isoformat(timespec="seconds"),
+        "total_seconds": round((finished - started).total_seconds(), 2),
+        "dry_run": dry_run,
+        "plan_file": os.path.basename(plan_file),
+        "stop_reason": stop_reason,
+        "switches": list(records.values()),   # inventory order
+    }
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    path = os.path.join(REPORT_DIR, f"report_{timestamp}.json")
+    with open(path, "w") as f:
+        json.dump(report, f, indent=2)
+    say(f"[9/9] Report saved: {path}")
+    return path
 
 
 def main(argv=None):
+    global LOG_PATH   # say() writes every progress line to this run's log
     args = parse_args(argv)
+    started = datetime.now()
+    timestamp = new_run_name(started)
+    os.makedirs(LOG_DIR, exist_ok=True)
+    LOG_PATH = os.path.join(LOG_DIR, f"run_{timestamp}.log")
+    say(f"Run {timestamp}: {'dry-run' if args.dry_run else 'apply'}, plan {args.plan}")
 
     # Step 1: read the files and refuse an unsafe plan.
     inventory = load_yaml(args.inventory)
     plan = load_yaml(args.plan)
     errors = validate_plan(plan, inventory)
     if errors:
-        print("Plan refused:")
+        say("Plan refused:")
         for error in errors:
-            print("  - " + error)
+            say("  - " + error)
         sys.exit(1)
-    print(f"Plan OK: {len(plan['vlans'])} VLANs, {len(plan['switches'])} switches")
+    say(f"Plan OK: {len(plan['vlans'])} VLANs, {len(plan['switches'])} switches")
+
+    # One report.json entry per switch, in inventory order.
+    records = {}
+    for switch, details in inventory.items():
+        records[switch] = new_record(switch, details["host"])
 
     # Step 2: pre-check. If any switch fails, stop before changing anything.
     username, password = ask_credentials()
     connections, errors = connect_all(inventory, username, password)
     if errors:
-        print("Pre-check FAILED, nothing was changed:")
+        say("Pre-check FAILED, nothing was changed:")
         for switch, reason in errors.items():
-            print(f"  - {switch}: {reason}")
+            say(f"  - {switch}: {reason}")
+            records[switch]["status"] = "UNREACHABLE"
+            records[switch]["error_lines"].append(reason)
         disconnect_all(connections)
+        write_report(timestamp, started, args.dry_run, args.plan, "pre-check failed", records)
         sys.exit(1)
-    print(f"Pre-check OK: all {len(connections)} switches reachable over SSH")
+    say(f"Pre-check OK: all {len(connections)} switches reachable over SSH")
 
+    # Step 9 runs in 'finally', so every ending below writes a report.
+    stop_reason = "unexpected error (see the log)"
     try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         changes = {}
         # Processing order follows plan.yaml: SW1, SW2, SW3, SW4, SW5.
         for switch in plan["switches"]:
             connection = connections[switch]
             settings = plan["switches"][switch] or {}
             access_ports = list((settings.get("access") or {}).keys())
+            begin = time.monotonic()
 
             # Step 3: backup (local file only; flash copy is still TODO).
             backup_path, port_configs = backup_switch(switch, connection, access_ports, timestamp)
-            print(f"{switch}: backup saved to {backup_path}")
+            say(f"{switch}: backup saved to {backup_path}")
+            records[switch]["backup_file"] = backup_path
 
             # Step 4: build the change list. ValueError = unsafe switch state.
             try:
                 changes[switch] = plan_switch(switch, connection, plan, port_configs)
             except ValueError as error:
-                print(f"Stopped, nothing was changed: {error}")
+                say(f"Stopped, nothing was changed: {error}")
+                stop_reason = f"unsafe switch state: {error}"
                 sys.exit(1)
+            records[switch]["planned_commands"], records[switch]["undo_list"] = changes[switch]
+            records[switch]["seconds"] = round(time.monotonic() - begin, 2)
 
         # Step 5: print commands and undo list per switch.
         for switch, (commands, undo) in changes.items():
             print_changes(switch, commands, undo)
 
         if args.dry_run:
-            print("\nDry run: nothing was sent to the switches.")
+            say("\nDry run: nothing was sent to the switches.")
+            for switch in changes:
+                records[switch]["status"] = "NOT_CHANGED"
+            stop_reason = "dry run"
             return
 
         # Steps 6 to 8: apply, verify, save or roll back, one switch at a
         # time in plan order. Stop at the first switch that is not saved, so
         # the remaining switches are never touched. Saved switches stay saved.
         statuses = {}
+        stop_reason = "completed"
         for switch in changes:
             commands, undo = changes[switch]
-            statuses[switch] = run_switch(connections[switch], switch, plan, commands, undo)
+            begin = time.monotonic()
+            statuses[switch] = run_switch(connections[switch], switch, plan, commands, undo, records[switch])
+            records[switch]["status"] = statuses[switch]
+            records[switch]["seconds"] = round(records[switch]["seconds"] + time.monotonic() - begin, 2)
             if statuses[switch] != "SAVED":
+                stop_reason = f"stopped at {switch} ({statuses[switch]})"
                 break
 
-        # TODO step 9: write reports/report_<timestamp>.json and the log file
         print_summary(list(changes), statuses)
         for status in statuses.values():
             if status != "SAVED":
                 sys.exit(1)
+    except Exception as error:
+        # e.g. SSH dropped mid-run: record why, then let Python show the error.
+        stop_reason = f"unexpected error: {error}"
+        raise
     finally:
         disconnect_all(connections)
+        write_report(timestamp, started, args.dry_run, args.plan, stop_reason, records)
 
 
 if __name__ == "__main__":
