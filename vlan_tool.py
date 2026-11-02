@@ -3,10 +3,10 @@
 Usage:
     python vlan_tool.py --plan plan.yaml --inventory inventory.yaml [--dry-run]
 
-STATUS: steps 1 to 5 are written (load, pre-check, backup, build changes,
-dry-run). They are tested with pytest using fake switches only, NOT on
-IOSvL2 in GNS3 yet. Steps 6 to 9 (apply, verify, save/rollback, report)
-are still TODO.
+STATUS: steps 1 to 6 are written (load, pre-check, backup, build changes,
+dry-run, apply). They are tested with pytest using fake switches only, NOT
+on IOSvL2 in GNS3 yet. Steps 7 to 9 (verify, save/rollback, report) are
+still TODO, so use --dry-run only on the lab until step 8 exists.
 """
 
 import argparse
@@ -25,6 +25,9 @@ from parsers import parse_interface_config, parse_trunk_allowed, parse_vlan_brie
 from planning import build_changes, load_yaml, validate_plan
 
 BACKUP_DIR = "backups"
+
+# Any of these in send_config_set output means IOS rejected a command.
+IOS_ERRORS = ["% Invalid input", "% Incomplete command", "% Ambiguous command"]
 
 
 def parse_args(argv=None):
@@ -128,6 +131,63 @@ def print_changes(switch, commands, undo):
         print("  " + line)
 
 
+# ---------- Step 6: apply ----------
+
+def copy_to_flash(conn):
+    """Copy the running config to flash:pre_change.cfg (backup on the switch).
+
+    IOS asks "Destination filename [pre_change.cfg]?" and, if the file
+    already exists, "Do you want to over write? [confirm]". We answer both
+    with Enter. These prompts are NOT yet seen on our real IOSvL2.
+    send_command_timing is used because these prompts do not end in '#'.
+    """
+    output = conn.send_command_timing("copy running-config flash:pre_change.cfg")
+    if "Destination filename" in output:
+        output += conn.send_command_timing("\n")
+    if "[confirm]" in output:
+        output += conn.send_command_timing("\n")
+    return output
+
+
+def find_ios_error(output, patterns):
+    """Return the first output line that contains one of the patterns, or ""."""
+    for line in output.splitlines():
+        for pattern in patterns:
+            if pattern in line:
+                return line.strip()
+    return ""
+
+
+def apply(conn, switch_name, commands):
+    """Step 6: back up to flash, then send the commands (running config only).
+
+    Does NOT roll back on failure; save_or_rollback (step 8) does that.
+    Returns {"ok": True/False, "output": text, "error_line": text}.
+    """
+    result = {"ok": False, "output": "", "error_line": ""}
+
+    # No flash backup = stop before sending anything.
+    # "bytes copied" is the normal IOS success line (NOT yet seen on our IOSvL2).
+    copy_output = copy_to_flash(conn)
+    copy_error = find_ios_error(copy_output, ["%Error"])
+    if copy_error or "bytes copied" not in copy_output:
+        result["output"] = copy_output
+        result["error_line"] = "flash copy failed: " + (copy_error or "no 'bytes copied' line")
+        print(f"[6/9] Apply {switch_name} ... FAILED ({result['error_line']})")
+        return result
+
+    if commands:
+        result["output"] = conn.send_config_set(commands)
+    result["error_line"] = find_ios_error(result["output"], IOS_ERRORS)
+    result["ok"] = result["error_line"] == ""
+
+    if result["ok"]:
+        print(f"[6/9] Apply {switch_name} ... OK ({len(commands)} commands)")
+    else:
+        print(f"[6/9] Apply {switch_name} ... FAILED ({result['error_line']})")
+    return result
+
+
 def main(argv=None):
     args = parse_args(argv)
 
@@ -181,9 +241,19 @@ def main(argv=None):
             print("\nDry run: nothing was sent to the switches.")
             return
 
-        # TODO steps 6-8: per switch in plan order: apply, verify, save or roll back
+        # Step 6: apply in plan order. Stop at the first failure so the
+        # remaining switches are never touched.
+        for switch in changes:
+            commands = changes[switch][0]   # [1] is the undo list, used in step 8
+            result = apply(connections[switch], switch, commands)
+            if not result["ok"]:
+                print(f"Stopped at {switch}. Remaining switches were not touched.")
+                print("Rollback (step 8) is not written yet: undo by hand from the backup.")
+                sys.exit(1)
+
+        # TODO steps 7-8: per switch in plan order: verify, save or roll back
         # TODO step 9: write reports/report_<timestamp>.json and the log file
-        print("\nApply/verify/rollback are not written yet. Nothing was changed.")
+        print("\nVerify/save/rollback are not written yet: running config changed but NOT saved.")
     finally:
         disconnect_all(connections)
 

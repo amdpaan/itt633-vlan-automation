@@ -1,8 +1,10 @@
-"""Tests for vlan_tool.py steps 1 to 5 (pre-check, backup, plan, dry-run).
+"""Tests for vlan_tool.py steps 1 to 6 (pre-check, backup, plan, dry-run, apply).
 
 No real switches: Netmiko's ConnectHandler is replaced with FakeSwitch,
 which answers show commands with the hand-written sample files.
 NOT YET VERIFIED ON IOSvL2: still needs a real run in GNS3 (TC01, TC02, TC10).
+The flash copy prompts and the canned config output below are guesses from
+normal IOS behaviour, not captured from our switches.
 """
 
 import os
@@ -28,6 +30,20 @@ SAMPLES = {
     "192.168.99.15": ACCESS,
 }
 
+# What IOS prints for "copy running-config flash:pre_change.cfg" when the file
+# already exists: one reply per send_command_timing call.
+FLASH_PROMPTS = [
+    "Destination filename [pre_change.cfg]? ",
+    "Do you want to over write? [confirm]",
+    "3456 bytes copied in 0.512 secs (6750 bytes/sec)\nSW#",
+]
+CLEAN_CONFIG_OUTPUT = "configure terminal\nSW(config)#vlan 10\nSW(config-vlan)#name Sales\nSW(config-vlan)#end\nSW#"
+INVALID_CONFIG_OUTPUT = (
+    "configure terminal\nSW(config)#interface GigabitEthernet9/9\n"
+    "                              ^\n"
+    "% Invalid input detected at '^' marker.\n\nSW(config)#end\nSW#"
+)
+
 
 class FakeSwitch:
     """Stands in for a Netmiko connection to a switch in its baseline state."""
@@ -38,6 +54,9 @@ class FakeSwitch:
         self.sent = []          # every show command we received
         self.config_sent = []   # anything sent as config (must stay empty)
         self.disconnected = False
+        self.timing_sent = []   # flash copy command and the Enter answers
+        self.flash_replies = list(FLASH_PROMPTS)
+        self.config_output = CLEAN_CONFIG_OUTPUT
 
     def find_prompt(self):
         return self.prompt
@@ -56,8 +75,13 @@ class FakeSwitch:
             return "Building configuration...\n!\ninterface %s\nend\n" % port
         raise AssertionError("unexpected command: " + command)
 
+    def send_command_timing(self, command):
+        self.timing_sent.append(command)
+        return self.flash_replies.pop(0)
+
     def send_config_set(self, commands):
         self.config_sent.append(commands)
+        return self.config_output
 
     def save_config(self):
         self.config_sent.append("write memory")
@@ -186,6 +210,94 @@ def test_unsafe_switch_state_stops(switches, monkeypatch, capsys):
     assert "not an active trunk" in capsys.readouterr().out
     for fake in switches.values():
         assert fake.config_sent == []
+        assert fake.disconnected
+
+
+# ---------- Step 6: apply ----------
+
+def test_apply_clean_output_is_ok(capsys):
+    fake = FakeSwitch("192.168.99.12")
+    result = vlan_tool.apply(fake, "SW2", ["vlan 10", "name Sales"])
+    assert result["ok"] is True
+    assert result["error_line"] == ""
+    assert fake.config_sent == [["vlan 10", "name Sales"]]
+    assert "[6/9] Apply SW2 ... OK" in capsys.readouterr().out
+
+
+def test_apply_invalid_input_fails_with_that_line(capsys):
+    fake = FakeSwitch("192.168.99.12")
+    fake.config_output = INVALID_CONFIG_OUTPUT
+    result = vlan_tool.apply(fake, "SW2", ["interface GigabitEthernet9/9"])
+    assert result["ok"] is False
+    assert result["error_line"] == "% Invalid input detected at '^' marker."
+    assert "[6/9] Apply SW2 ... FAILED" in capsys.readouterr().out
+    assert fake.config_sent != [] and "write memory" not in fake.config_sent
+
+
+def test_apply_answers_flash_prompts():
+    fake = FakeSwitch("192.168.99.12")
+    vlan_tool.apply(fake, "SW2", ["vlan 10"])
+    # Copy command, then Enter for the filename, then Enter for overwrite.
+    assert fake.timing_sent == ["copy running-config flash:pre_change.cfg", "\n", "\n"]
+
+
+def test_apply_flash_copy_new_file_needs_one_enter():
+    """If pre_change.cfg does not exist yet, IOS skips the overwrite prompt."""
+    fake = FakeSwitch("192.168.99.12")
+    fake.flash_replies = ["Destination filename [pre_change.cfg]? ", "2048 bytes copied in 0.3 secs\nSW#"]
+    assert vlan_tool.apply(fake, "SW2", ["vlan 10"])["ok"] is True
+    assert fake.timing_sent == ["copy running-config flash:pre_change.cfg", "\n"]
+
+
+def test_apply_flash_error_sends_nothing():
+    fake = FakeSwitch("192.168.99.12")
+    fake.flash_replies = ["Destination filename [pre_change.cfg]? ",
+                          "%Error copying flash:pre_change.cfg (No space left on device)\nSW#"]
+    result = vlan_tool.apply(fake, "SW2", ["vlan 10"])
+    assert result["ok"] is False
+    assert "%Error copying" in result["error_line"]
+    assert fake.config_sent == []
+
+
+def test_apply_flash_without_bytes_copied_sends_nothing():
+    fake = FakeSwitch("192.168.99.12")
+    fake.flash_replies = ["SW#"]
+    result = vlan_tool.apply(fake, "SW2", ["vlan 10"])
+    assert result["ok"] is False
+    assert "bytes copied" in result["error_line"]
+    assert fake.config_sent == []
+
+
+@pytest.mark.parametrize("error", ["% Invalid input detected at '^' marker.",
+                                   "% Incomplete command.",
+                                   "% Ambiguous command:  \"sw\""])
+def test_find_ios_error_finds_each_error(error):
+    output = "SW(config)#something\n" + error + "\nSW(config)#"
+    assert vlan_tool.find_ios_error(output, vlan_tool.IOS_ERRORS) == error
+
+
+def test_main_stops_after_first_failed_switch(switches, monkeypatch, capsys):
+    """SW1 rejects a command: SW2 to SW5 get no config and nothing is saved."""
+    original_connect = vlan_tool.ConnectHandler
+
+    def connect_with_bad_sw1(host, **kwargs):
+        fake = original_connect(host, **kwargs)
+        if host == "192.168.99.11":
+            fake.config_output = INVALID_CONFIG_OUTPUT
+        return fake
+
+    monkeypatch.setattr(vlan_tool, "ConnectHandler", connect_with_bad_sw1)
+    with pytest.raises(SystemExit) as exit_info:
+        vlan_tool.main(ARGS)
+
+    assert exit_info.value.code == 1
+    assert "Stopped at SW1" in capsys.readouterr().out
+    assert len(switches["192.168.99.11"].config_sent) == 1
+    for host in ["192.168.99.12", "192.168.99.13", "192.168.99.14", "192.168.99.15"]:
+        assert switches[host].config_sent == []
+        assert switches[host].timing_sent == []     # not even the flash copy
+    for fake in switches.values():
+        assert "write memory" not in fake.config_sent
         assert fake.disconnected
 
 
