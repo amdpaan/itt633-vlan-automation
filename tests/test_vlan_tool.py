@@ -1,4 +1,4 @@
-"""Tests for vlan_tool.py steps 1 to 6 (pre-check, backup, plan, dry-run, apply).
+"""Tests for vlan_tool.py steps 1 to 7 (pre-check, backup, plan, dry-run, apply, verify).
 
 No real switches: Netmiko's ConnectHandler is replaced with FakeSwitch,
 which answers show commands with the hand-written sample files.
@@ -57,12 +57,15 @@ class FakeSwitch:
         self.timing_sent = []   # flash copy command and the Enter answers
         self.flash_replies = list(FLASH_PROMPTS)
         self.config_output = CLEAN_CONFIG_OUTPUT
+        self.outputs = {}       # {show command: text}, overrides the answers below
 
     def find_prompt(self):
         return self.prompt
 
     def send_command(self, command):
         self.sent.append(command)
+        if command in self.outputs:
+            return self.outputs[command]
         vlan_file, trunk_file = SAMPLES[self.host]
         if command == "show running-config":
             return "hostname fake-%s\n!\nend\n" % self.host
@@ -296,6 +299,150 @@ def test_main_stops_after_first_failed_switch(switches, monkeypatch, capsys):
     for host in ["192.168.99.12", "192.168.99.13", "192.168.99.14", "192.168.99.15"]:
         assert switches[host].config_sent == []
         assert switches[host].timing_sent == []     # not even the flash copy
+    for fake in switches.values():
+        assert "write memory" not in fake.config_sent
+        assert fake.disconnected
+
+
+# ---------- Step 7: verify ----------
+
+PLAN_VLANS = [{"id": 10, "name": "Sales"}, {"id": 20, "name": "IT"},
+              {"id": 30, "name": "Guest"}, {"id": 40, "name": "Finance"}]
+SW1_PLAN = {"trunks": {"GigabitEthernet0/1": [10, 20, 30, 40], "GigabitEthernet0/2": [10, 20, 30, 40],
+                       "GigabitEthernet0/3": [10, 20, 30, 40], "GigabitEthernet1/1": [10, 20, 30, 40]}}
+SW2_PLAN = {"access": {"GigabitEthernet0/1": 10, "GigabitEthernet0/2": 20},
+            "trunks": {"GigabitEthernet0/0": [10, 20, 30, 40]}}
+
+
+def fake_from_files(folder, prefix):
+    """A FakeSwitch whose verify show commands come from files such as
+    tests/samples/<folder>/<prefix>_show_vlan_brief.txt."""
+    fake = FakeSwitch("unused")
+    for command in ["show vlan brief", "show interfaces trunk", "show interfaces switchport"]:
+        filename = "%s/%s_%s.txt" % (folder, prefix, command.replace(" ", "_"))
+        fake.outputs[command] = read_sample(filename)
+    return fake
+
+
+def synthetic_after(switch):
+    """Post-apply samples. SYNTHETIC (hand-edited from real), never evidence."""
+    return fake_from_files("synthetic", switch + "_after")
+
+
+def test_verify_real_baseline_sw1_fails(capsys):
+    """REAL IOSvL2 data: before the tool runs, VLANs 10-40 are missing everywhere."""
+    result = vlan_tool.verify(fake_from_files("real", "SW1"), "SW1", SW1_PLAN, PLAN_VLANS)
+    assert result["ok"] is False
+    for vlan_id in [10, 20, 30, 40]:
+        assert "VLAN %d missing" % vlan_id in result["mismatches"]
+    assert "GigabitEthernet1/1 allowed list is missing 10, 20, 30, 40" in result["mismatches"]
+    # The real Gi1/0 is correct, so the protected port check must stay quiet.
+    assert not any("protected" in m for m in result["mismatches"])
+    assert "[7/9] Verify SW1 ... FAILED (8 mismatches)" in capsys.readouterr().out
+
+
+def test_verify_real_baseline_sw2_fails_on_pc_ports():
+    """REAL IOSvL2 data: PC ports are still dynamic auto in VLAN 1."""
+    result = vlan_tool.verify(fake_from_files("real", "SW2"), "SW2", SW2_PLAN, PLAN_VLANS)
+    assert result["ok"] is False
+    assert "GigabitEthernet0/1 mode is dynamic auto, planned static access" in result["mismatches"]
+    assert "GigabitEthernet0/2 access VLAN is 1, planned 20" in result["mismatches"]
+    assert "GigabitEthernet0/0 allowed list is missing 10, 20, 30, 40" in result["mismatches"]
+
+
+@pytest.mark.parametrize("switch, switch_plan", [("SW1", SW1_PLAN), ("SW2", SW2_PLAN)])
+def test_verify_synthetic_after_apply_passes(switch, switch_plan, capsys):
+    """SYNTHETIC post-apply data (STP section still at 99 on purpose)."""
+    result = vlan_tool.verify(synthetic_after(switch), switch, switch_plan, PLAN_VLANS)
+    assert result == {"ok": True, "mismatches": []}
+    assert "[7/9] Verify %s ... OK" % switch in capsys.readouterr().out
+
+
+def test_check_vlans_pass():
+    vlans = {10: {"name": "Sales"}, 20: {"name": "IT"}, 30: {"name": "Guest"},
+             40: {"name": "Finance"}, 99: {"name": "Management"}}
+    assert vlan_tool.check_vlans(PLAN_VLANS, vlans) == []
+
+
+def test_check_vlans_fail():
+    vlans = {10: {"name": "Sales"}, 20: {"name": "IT"}, 30: {"name": "VLAN0030"}}
+    assert vlan_tool.check_vlans(PLAN_VLANS, vlans) == [
+        "VLAN 30 name is VLAN0030, planned Guest",
+        "VLAN 40 missing",
+        "management VLAN 99 missing",
+    ]
+
+
+def test_check_trunks_pass():
+    trunks = {"GigabitEthernet0/0": [10, 20, 30, 40, 99]}
+    assert vlan_tool.check_trunks(SW2_PLAN["trunks"], trunks) == []
+
+
+def test_check_trunks_fail():
+    plan = {"GigabitEthernet0/0": [10, 20, 30, 40], "GigabitEthernet0/1": [10]}
+    trunks = {"GigabitEthernet0/0": [10, 20, 30]}   # 40 and 99 missing, Gi0/1 not trunking
+    assert vlan_tool.check_trunks(plan, trunks) == [
+        "GigabitEthernet0/0 allowed list is missing 40, 99",
+        "GigabitEthernet0/1 is not trunking",
+    ]
+
+
+def test_check_access_ports_pass():
+    switchports = {
+        "GigabitEthernet0/1": {"admin_mode": "static access", "oper_mode": "down", "access_vlan": 10},
+        "GigabitEthernet0/2": {"admin_mode": "static access", "oper_mode": "static access", "access_vlan": 20},
+    }
+    assert vlan_tool.check_access_ports(SW2_PLAN["access"], switchports) == []
+
+
+def test_check_access_ports_fail():
+    switchports = {
+        "GigabitEthernet0/1": {"admin_mode": "dynamic auto", "oper_mode": "static access", "access_vlan": 10},
+    }
+    assert vlan_tool.check_access_ports(SW2_PLAN["access"], switchports) == [
+        "GigabitEthernet0/1 mode is dynamic auto, planned static access",
+        "GigabitEthernet0/2 not found in show interfaces switchport",
+    ]
+
+
+def test_check_protected_ports_pass():
+    switchports = {"GigabitEthernet1/0": {"admin_mode": "static access", "oper_mode": "static access",
+                                          "access_vlan": 99}}
+    assert vlan_tool.check_protected_ports("SW1", switchports) == []
+    assert vlan_tool.check_protected_ports("SW2", {}) == []   # SW2 has no protected ports
+
+
+def test_check_protected_ports_fail():
+    switchports = {"GigabitEthernet1/0": {"admin_mode": "static access", "oper_mode": "static access",
+                                          "access_vlan": 1}}
+    assert vlan_tool.check_protected_ports("SW1", switchports) == [
+        "protected port GigabitEthernet1/0 access VLAN is 1, planned 99",
+    ]
+
+
+def test_main_stops_when_verify_fails(switches, monkeypatch, capsys):
+    """Apply works on SW1, but the switch still shows the REAL baseline, so
+    verify fails: SW2 to SW5 get nothing and nothing is saved."""
+    original_connect = vlan_tool.ConnectHandler
+
+    def connect_with_real_sw1(host, **kwargs):
+        fake = original_connect(host, **kwargs)
+        if host == "192.168.99.11":
+            fake.outputs["show interfaces switchport"] = read_sample("real/SW1_show_interfaces_switchport.txt")
+        return fake
+
+    monkeypatch.setattr(vlan_tool, "ConnectHandler", connect_with_real_sw1)
+    with pytest.raises(SystemExit) as exit_info:
+        vlan_tool.main(ARGS)
+
+    assert exit_info.value.code == 1
+    out = capsys.readouterr().out
+    assert "[6/9] Apply SW1 ... OK" in out
+    assert "[7/9] Verify SW1 ... FAILED" in out
+    assert "Stopped at SW1: verify failed" in out
+    for host in ["192.168.99.12", "192.168.99.13", "192.168.99.14", "192.168.99.15"]:
+        assert switches[host].config_sent == []
+        assert switches[host].timing_sent == []
     for fake in switches.values():
         assert "write memory" not in fake.config_sent
         assert fake.disconnected

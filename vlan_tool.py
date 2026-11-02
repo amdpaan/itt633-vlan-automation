@@ -3,9 +3,9 @@
 Usage:
     python vlan_tool.py --plan plan.yaml --inventory inventory.yaml [--dry-run]
 
-STATUS: steps 1 to 6 are written (load, pre-check, backup, build changes,
-dry-run, apply). They are tested with pytest using fake switches only, NOT
-on IOSvL2 in GNS3 yet. Steps 7 to 9 (verify, save/rollback, report) are
+STATUS: steps 1 to 7 are written (load, pre-check, backup, build changes,
+dry-run, apply, verify). They are tested with pytest using fake switches
+only, NOT on IOSvL2 in GNS3 yet. Steps 8 and 9 (save/rollback, report) are
 still TODO, so use --dry-run only on the lab until step 8 exists.
 """
 
@@ -21,8 +21,19 @@ from netmiko import (
     NetmikoTimeoutException,
 )
 
-from parsers import parse_interface_config, parse_trunk_allowed, parse_vlan_brief
-from planning import build_changes, load_yaml, validate_plan
+from parsers import (
+    parse_interface_config,
+    parse_switchport_all,
+    parse_trunk_allowed,
+    parse_vlan_brief,
+)
+from planning import (
+    MANAGEMENT_VLAN,
+    PROTECTED_PORTS,
+    build_changes,
+    load_yaml,
+    validate_plan,
+)
 
 BACKUP_DIR = "backups"
 
@@ -188,6 +199,102 @@ def apply(conn, switch_name, commands):
     return result
 
 
+# ---------- Step 7: verify ----------
+# Each check takes PARSED data and returns a list of mismatch strings.
+# An empty list means that check passed.
+
+def check_vlans(planned_vlans, vlans):
+    """Every planned VLAN exists with its planned name, and VLAN 99 is still there."""
+    mismatches = []
+    for vlan in planned_vlans:
+        vlan_id = vlan["id"]
+        if vlan_id not in vlans:
+            mismatches.append(f"VLAN {vlan_id} missing")
+        elif vlans[vlan_id]["name"] != vlan["name"]:
+            mismatches.append(f"VLAN {vlan_id} name is {vlans[vlan_id]['name']}, planned {vlan['name']}")
+    if MANAGEMENT_VLAN not in vlans:
+        mismatches.append(f"management VLAN {MANAGEMENT_VLAN} missing")
+    return mismatches
+
+
+def check_trunks(trunk_plan, trunks):
+    """Each planned trunk is trunking and allows its planned VLANs plus VLAN 99.
+
+    trunks comes from the 'Vlans allowed on trunk' section (the configured
+    list), not the spanning tree section, because a new VLAN can take ~30 s
+    to start forwarding right after apply.
+    """
+    mismatches = []
+    for port, planned in trunk_plan.items():
+        if port not in trunks:
+            # parse_trunk_allowed only lists ports that are trunking.
+            mismatches.append(f"{port} is not trunking")
+            continue
+        missing = []
+        for vlan_id in planned + [MANAGEMENT_VLAN]:
+            if vlan_id not in trunks[port]:
+                missing.append(str(vlan_id))
+        if missing:
+            mismatches.append(f"{port} allowed list is missing {', '.join(missing)}")
+    return mismatches
+
+
+def check_access_ports(access_plan, switchports):
+    """Each planned port is in static access mode with the planned VLAN.
+
+    We check the ADMIN mode: on IOSvL2 a port left at 'dynamic auto' still
+    shows 'Operational Mode: static access', so the oper mode proves nothing.
+    """
+    mismatches = []
+    for port, planned in access_plan.items():
+        if port not in switchports:
+            mismatches.append(f"{port} not found in show interfaces switchport")
+            continue
+        info = switchports[port]
+        if info["admin_mode"] != "static access":
+            mismatches.append(f"{port} mode is {info['admin_mode']}, planned static access")
+        if info["access_vlan"] != planned:
+            mismatches.append(f"{port} access VLAN is {info['access_vlan']}, planned {planned}")
+    return mismatches
+
+
+def check_protected_ports(switch_name, switchports):
+    """The automation host port (SW1 Gi1/0) must still be access VLAN 99,
+    otherwise the tool has cut off its own SSH path."""
+    planned = {}
+    for port in PROTECTED_PORTS.get(switch_name, []):
+        planned[port] = MANAGEMENT_VLAN
+    mismatches = []
+    for mismatch in check_access_ports(planned, switchports):
+        mismatches.append("protected port " + mismatch)
+    return mismatches
+
+
+def verify(conn, switch_name, switch_plan, planned_vlans):
+    """Step 7: read the switch again and compare it with plan.yaml.
+
+    Returns {"ok": True/False, "mismatches": [text, ...]}.
+    """
+    vlans = parse_vlan_brief(conn.send_command("show vlan brief"))
+    trunks = parse_trunk_allowed(conn.send_command("show interfaces trunk"))
+    switchports = parse_switchport_all(conn.send_command("show interfaces switchport"))
+
+    mismatches = []
+    mismatches.extend(check_vlans(planned_vlans, vlans))
+    mismatches.extend(check_trunks(switch_plan.get("trunks") or {}, trunks))
+    mismatches.extend(check_access_ports(switch_plan.get("access") or {}, switchports))
+    mismatches.extend(check_protected_ports(switch_name, switchports))
+
+    ok = mismatches == []
+    if ok:
+        print(f"[7/9] Verify {switch_name} ... OK")
+    else:
+        print(f"[7/9] Verify {switch_name} ... FAILED ({len(mismatches)} mismatches)")
+        for mismatch in mismatches:
+            print("  - " + mismatch)
+    return {"ok": ok, "mismatches": mismatches}
+
+
 def main(argv=None):
     args = parse_args(argv)
 
@@ -241,8 +348,9 @@ def main(argv=None):
             print("\nDry run: nothing was sent to the switches.")
             return
 
-        # Step 6: apply in plan order. Stop at the first failure so the
-        # remaining switches are never touched.
+        # Steps 6 and 7: apply then verify, one switch at a time in plan
+        # order. Stop at the first failure so the remaining switches are
+        # never touched.
         for switch in changes:
             commands = changes[switch][0]   # [1] is the undo list, used in step 8
             result = apply(connections[switch], switch, commands)
@@ -251,9 +359,16 @@ def main(argv=None):
                 print("Rollback (step 8) is not written yet: undo by hand from the backup.")
                 sys.exit(1)
 
-        # TODO steps 7-8: per switch in plan order: verify, save or roll back
+            switch_plan = plan["switches"][switch] or {}
+            checked = verify(connections[switch], switch, switch_plan, plan["vlans"])
+            if not checked["ok"]:
+                print(f"Stopped at {switch}: verify failed. Remaining switches were not touched.")
+                print("Rollback (step 8) is not written yet: undo by hand from the backup.")
+                sys.exit(1)
+
+        # TODO step 8: save or roll back
         # TODO step 9: write reports/report_<timestamp>.json and the log file
-        print("\nVerify/save/rollback are not written yet: running config changed but NOT saved.")
+        print("\nSave/rollback are not written yet: running config changed but NOT saved.")
     finally:
         disconnect_all(connections)
 

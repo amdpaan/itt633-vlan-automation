@@ -17,6 +17,9 @@ Subfolders:
   `#` header.
 - `synthetic/`: made-up variants of real layouts, built to test one
   specific parser behaviour. Never evidence of real switch output.
+  `SW1_after_*` and `SW2_after_*` are hand-edited copies of the real
+  baseline showing the expected state after the tool runs (used to test
+  that verify() passes). Replace them with real captures after a lab run.
 
 To add a capture: save it as `real/<SWITCH>_<command>.txt` (for example
 `SW2_show_run_int_gi0_1.txt`), add a test for it, and re-run `pytest`.

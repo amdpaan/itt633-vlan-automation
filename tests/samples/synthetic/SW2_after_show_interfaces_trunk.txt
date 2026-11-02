@@ -1,0 +1,18 @@
+# SYNTHETIC, NOT REAL OUTPUT.
+# Hand-edited copy of tests/samples/real/SW2_show_interfaces_trunk.txt (real IOSvL2 baseline layout),
+# changed to show what the switch should look like AFTER the tool applied
+# plan.yaml. Used only to test that verify() passes. Never evidence.
+# The spanning tree forwarding section is left at 99 on purpose: right after
+# apply, a new VLAN can take ~30 s to forward, and verify must not depend on it.
+
+Port        Mode             Encapsulation  Status        Native vlan
+Gi0/0       on               802.1q         trunking      1
+
+Port        Vlans allowed on trunk
+Gi0/0       10,20,30,40,99
+
+Port        Vlans allowed and active in management domain
+Gi0/0       10,20,30,40,99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi0/0       99

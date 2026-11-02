@@ -237,15 +237,16 @@ Read this section first in a new session. `git log` has the full history.
 - Image moved to IOSvL2 15.2; all names are `GigabitEthernet0/x`. Five-switch topology with VLAN 40 is in `inventory.yaml`, `plan.yaml`, the samples and the tests.
 - `parsers.py`: `show vlan brief`, `show interfaces trunk`, `show interfaces <port> switchport`, `show running-config interface <port>`.
 - `planning.py`: `validate_plan()` (safety rules) and `build_changes()` (commands + undo list).
-- `vlan_tool.py` steps 1 to 6:
+- `vlan_tool.py` steps 1 to 7:
   - `connect_all()`: SSH pre-check that stops if any switch fails, and checks for the `#` prompt (privilege 15).
   - `backup_switch()`: saves `show running-config` to `backups/<switch>_<timestamp>.cfg` and captures each planned access port's config.
   - `plan_switch()`: reads the switch state and builds the change list.
   - `--dry-run` prints the commands and undo list per switch.
   - Credentials come from `input()` and `getpass`. They are never stored.
   - `apply()` (step 6, apply mode only, never in dry-run): `copy running-config flash:pre_change.cfg` answering both prompts with Enter (prompts and the "bytes copied" success line NOT yet seen on IOSvL2), and fails and sends nothing if the copy shows `%Error` or no "bytes copied". Then `send_config_set` and a scan for the three IOS errors. No rollback inside; `main()` stops at the first failed switch.
+  - `verify()` (step 7): runs `show vlan brief`, `show interfaces trunk`, `show interfaces switchport` and four checks on the parsed data (each returns a list of mismatch strings): `check_vlans` (ids and names, plus VLAN 99), `check_trunks` (configured "Vlans allowed on trunk" list, not the STP section, which can lag ~30 s), `check_access_ports` (ADMIN mode `static access` + VLAN; on IOSvL2 a `dynamic auto` port still shows oper mode `static access`), `check_protected_ports` (SW1 Gi1/0 still access VLAN 99). `main()` runs apply then verify per switch and stops at the first failure. Passing case tested only on synthetic post-apply samples (`tests/samples/synthetic/SW1_after_*`, `SW2_after_*`).
   - **Until step 8 exists, the lab runs `--dry-run` only** (decided with Paan, 2 Nov): apply changes the running config with no verify or rollback.
-- 82 pytest tests: `tests/test_parsers.py`, `tests/test_parsers_real.py` (real IOSvL2 baseline output, 30 tests), `tests/test_planning.py`, `tests/test_vlan_tool.py`.
+- 95 pytest tests: `tests/test_parsers.py`, `tests/test_parsers_real.py` (real IOSvL2 baseline output, 30 tests), `tests/test_planning.py`, `tests/test_vlan_tool.py`.
   - `tests/test_vlan_tool.py` replaces Netmiko's `ConnectHandler` with a `FakeSwitch` class that answers with the sample files. SW3 to SW5 reuse SW2's samples.
   - To try a dry-run without switches, patch `vlan_tool.ConnectHandler`, `vlan_tool.ask_credentials` and `vlan_tool.BACKUP_DIR` the same way.
 
@@ -253,9 +254,8 @@ Read this section first in a new session. `git log` has the full history.
 
 1. GNS3 lab (run by Paan's friend, not Paan): baseline is done (see Lab status); next is SSH from the automation host, then TC01 and TC02. Baseline captures are in and tested; still to capture: `show running-config interface <port>` and the show outputs after a run (VLANs 10 to 40 present).
 2. Lab check for step 6: capture the real `copy running-config flash:pre_change.cfg` output (first run and second run, when the file exists) to confirm the prompts and the "bytes copied" line.
-3. Step 7: verify against plan.yaml, using `parse_switchport()` for the access ports.
-4. Step 8: on pass, `save_config()`. On fail, run the undo list, do not save, and stop before the remaining switches.
-5. Step 9: `reports/report_<timestamp>.json` (fields listed in "report.json content" above) and a log file in `logs/`.
+3. Step 8: on pass, `save_config()`. On fail, run the undo list, do not save, and stop before the remaining switches.
+4. Step 9: `reports/report_<timestamp>.json` (fields listed in "report.json content" above) and a log file in `logs/`.
 
 ### Still unverified or assumed
 
