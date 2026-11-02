@@ -3,10 +3,10 @@
 Usage:
     python vlan_tool.py --plan plan.yaml --inventory inventory.yaml [--dry-run]
 
-STATUS: steps 1 to 7 are written (load, pre-check, backup, build changes,
-dry-run, apply, verify). They are tested with pytest using fake switches
-only, NOT on IOSvL2 in GNS3 yet. Steps 8 and 9 (save/rollback, report) are
-still TODO, so use --dry-run only on the lab until step 8 exists.
+STATUS: steps 1 to 8 are written (load, pre-check, backup, build changes,
+dry-run, apply, verify, save or roll back). They are tested with pytest
+using fake switches only, NOT on IOSvL2 in GNS3 yet. Step 9 (report.json
+and log file) is still TODO.
 """
 
 import argparse
@@ -22,6 +22,7 @@ from netmiko import (
 )
 
 from parsers import (
+    expand_vlan_list,
     parse_interface_config,
     parse_switchport_all,
     parse_trunk_allowed,
@@ -173,9 +174,9 @@ def apply(conn, switch_name, commands):
     """Step 6: back up to flash, then send the commands (running config only).
 
     Does NOT roll back on failure; save_or_rollback (step 8) does that.
-    Returns {"ok": True/False, "output": text, "error_line": text}.
+    Returns {"ok", "output", "error_line", "sent"}; sent = config reached the switch.
     """
-    result = {"ok": False, "output": "", "error_line": ""}
+    result = {"ok": False, "output": "", "error_line": "", "sent": False}
 
     # No flash backup = stop before sending anything.
     # "bytes copied" is the normal IOS success line (NOT yet seen on our IOSvL2).
@@ -189,6 +190,7 @@ def apply(conn, switch_name, commands):
 
     if commands:
         result["output"] = conn.send_config_set(commands)
+        result["sent"] = True
     result["error_line"] = find_ios_error(result["output"], IOS_ERRORS)
     result["ok"] = result["error_line"] == ""
 
@@ -295,6 +297,177 @@ def verify(conn, switch_name, switch_plan, planned_vlans):
     return {"ok": ok, "mismatches": mismatches}
 
 
+# ---------- Step 8: save or roll back ----------
+
+def unsafe_undo_lines(switch_name, undo_commands):
+    """Second safety net: undo lines that touch VLAN 99 or a protected port.
+
+    validate_plan() should already make this impossible; this check stops a
+    bug in build_changes() from cutting off our own SSH path.
+    """
+    unsafe = []
+    for line in undo_commands:
+        words = line.split()
+        # e.g. "no vlan 40" or "switchport trunk allowed vlan remove 10,20,30,40"
+        if line.startswith(("vlan ", "no vlan ", "switchport trunk allowed vlan remove ")):
+            if MANAGEMENT_VLAN in expand_vlan_list(words[-1]):
+                unsafe.append(line)
+        # e.g. "interface GigabitEthernet1/0" or "default interface GigabitEthernet1/0"
+        if line.startswith(("interface ", "default interface ")):
+            if words[-1] in PROTECTED_PORTS.get(switch_name, []):
+                unsafe.append(line)
+    return unsafe
+
+
+def find_all_percent_lines(output):
+    """Every IOS message line, e.g. '% Invalid input detected at '^' marker.'"""
+    lines = []
+    for line in output.splitlines():
+        if line.strip().startswith("%"):
+            lines.append(line.strip())
+    return lines
+
+
+def undo_targets(undo_commands):
+    """Read back from the undo list what the tool changed on this switch.
+
+    Returns (vlan_ids, trunk_vlans, ports):
+        vlan_ids:    VLANs the tool created, from "no vlan 40"
+        trunk_vlans: {port: [10, 20]} the tool added to each trunk
+        ports:       access ports the tool reset, from "default interface <port>"
+    """
+    vlan_ids = []
+    trunk_vlans = {}
+    ports = []
+    current_port = None
+    for line in undo_commands:
+        if line.startswith("no vlan "):
+            vlan_ids.append(int(line.split()[-1]))
+        elif line.startswith("default interface "):
+            ports.append(line.split()[-1])
+        elif line.startswith("interface "):
+            current_port = line.split()[-1]
+        elif line.startswith("switchport trunk allowed vlan remove "):
+            trunk_vlans[current_port] = expand_vlan_list(line.split()[-1])
+        elif line == "switchport mode access" and current_port in ports:
+            # The port was static access before the run, so it may stay that way.
+            ports.remove(current_port)
+    return vlan_ids, trunk_vlans, ports
+
+
+def check_rollback(conn, switch_name, undo_commands):
+    """After a rollback: are the tool's changes really gone? (TC09)
+
+    Returns a list of mismatch strings (empty = rollback complete).
+    """
+    vlan_ids, trunk_vlans, ports = undo_targets(undo_commands)
+    vlans = parse_vlan_brief(conn.send_command("show vlan brief"))
+    trunks = parse_trunk_allowed(conn.send_command("show interfaces trunk"))
+    switchports = parse_switchport_all(conn.send_command("show interfaces switchport"))
+
+    mismatches = []
+    for vlan_id in vlan_ids:
+        if vlan_id in vlans:
+            mismatches.append(f"VLAN {vlan_id} still exists")
+    for port, added in trunk_vlans.items():
+        still_allowed = [str(v) for v in added if v in trunks.get(port, [])]
+        if still_allowed:
+            mismatches.append(f"{port} still allows {', '.join(still_allowed)}")
+    for port in ports:
+        if switchports.get(port, {}).get("admin_mode") == "static access":
+            mismatches.append(f"{port} is still static access")
+    mismatches.extend(check_protected_ports(switch_name, switchports))
+    return mismatches
+
+
+def rollback(conn, switch_name, undo_commands):
+    """Send the undo list (running config only, never saved) and check the result."""
+    result = {"ok": False, "action": "rollback", "output": "", "error_lines": [], "mismatches": []}
+    unsafe = unsafe_undo_lines(switch_name, undo_commands)
+    if unsafe:
+        # Send NO undo at all: a half-sent undo list is worse than none.
+        result["mismatches"] = ["unsafe undo line refused: " + line for line in unsafe]
+    else:
+        # One batch: IOS keeps going after a % line (e.g. "no vlan 40" when
+        # apply stopped before creating VLAN 40), so every undo line runs.
+        result["output"] = conn.send_config_set(undo_commands)
+        result["error_lines"] = find_all_percent_lines(result["output"])
+        result["mismatches"] = check_rollback(conn, switch_name, undo_commands)
+    result["ok"] = result["mismatches"] == []
+
+    print(f"[8/9] Rollback {switch_name} ... {'OK' if result['ok'] else 'INCOMPLETE'}")
+    for line in result["error_lines"]:
+        print("  IOS said: " + line)
+    for mismatch in result["mismatches"]:
+        print("  - " + mismatch)
+    if not result["ok"]:
+        print(f"ROLLBACK INCOMPLETE on {switch_name}: restore flash:pre_change.cfg by hand")
+    return result
+
+
+def save_or_rollback(conn, switch_name, passed, undo_commands):
+    """Step 8: verify passed -> write memory. Failed -> roll back, never save."""
+    if not passed:
+        return rollback(conn, switch_name, undo_commands)
+
+    # "[OK]" is the normal IOS line after write memory
+    # (NOT yet seen through Netmiko on our IOSvL2).
+    output = conn.save_config()
+    ok = "[OK]" in output
+    print(f"[8/9] Save {switch_name} ... {'OK' if ok else 'FAILED'}")
+    return {"ok": ok, "action": "save", "output": output, "error_lines": [], "mismatches": []}
+
+
+def run_switch(conn, switch_name, plan, commands, undo_commands):
+    """Steps 6 to 8 for one switch. Returns its status:
+    SAVED, NOT_SAVED, ROLLED_BACK, ROLLBACK_INCOMPLETE or NOT_CHANGED.
+    """
+    applied = apply(conn, switch_name, commands)
+    passed = applied["ok"]
+    if passed:
+        switch_plan = plan["switches"][switch_name] or {}
+        passed = verify(conn, switch_name, switch_plan, plan["vlans"])["ok"]
+
+    if not passed and not applied["sent"]:
+        # e.g. the flash copy failed: nothing reached the switch, nothing to undo.
+        print(f"[8/9] Rollback {switch_name} ... SKIPPED (nothing was sent)")
+        return "NOT_CHANGED"
+
+    outcome = save_or_rollback(conn, switch_name, passed, undo_commands)
+    if passed and outcome["ok"]:
+        return "SAVED"
+    if passed:
+        # Running config is correct but not saved; a reload would lose it.
+        print(f"{switch_name} verified but NOT saved")
+        return "NOT_SAVED"
+    if outcome["ok"]:
+        return "ROLLED_BACK"
+    return "ROLLBACK_INCOMPLETE"
+
+
+def print_summary(switch_names, statuses):
+    """One line per group: saved, rolled back, untouched, needs attention."""
+    saved = []
+    rolled_back = []
+    untouched = []
+    attention = []
+    for switch in switch_names:
+        status = statuses.get(switch)
+        if status is None:
+            untouched.append(switch)
+        elif status == "SAVED":
+            saved.append(switch)
+        elif status == "ROLLED_BACK":
+            rolled_back.append(switch)
+        else:
+            attention.append(f"{switch} {status}")
+    print(f"\nSummary: saved {', '.join(saved) or 'none'}"
+          f" | rolled back {', '.join(rolled_back) or 'none'}"
+          f" | untouched {', '.join(untouched) or 'none'}")
+    if attention:
+        print("Needs attention: " + ", ".join(attention))
+
+
 def main(argv=None):
     args = parse_args(argv)
 
@@ -348,27 +521,21 @@ def main(argv=None):
             print("\nDry run: nothing was sent to the switches.")
             return
 
-        # Steps 6 and 7: apply then verify, one switch at a time in plan
-        # order. Stop at the first failure so the remaining switches are
-        # never touched.
+        # Steps 6 to 8: apply, verify, save or roll back, one switch at a
+        # time in plan order. Stop at the first switch that is not saved, so
+        # the remaining switches are never touched. Saved switches stay saved.
+        statuses = {}
         for switch in changes:
-            commands = changes[switch][0]   # [1] is the undo list, used in step 8
-            result = apply(connections[switch], switch, commands)
-            if not result["ok"]:
-                print(f"Stopped at {switch}. Remaining switches were not touched.")
-                print("Rollback (step 8) is not written yet: undo by hand from the backup.")
-                sys.exit(1)
+            commands, undo = changes[switch]
+            statuses[switch] = run_switch(connections[switch], switch, plan, commands, undo)
+            if statuses[switch] != "SAVED":
+                break
 
-            switch_plan = plan["switches"][switch] or {}
-            checked = verify(connections[switch], switch, switch_plan, plan["vlans"])
-            if not checked["ok"]:
-                print(f"Stopped at {switch}: verify failed. Remaining switches were not touched.")
-                print("Rollback (step 8) is not written yet: undo by hand from the backup.")
-                sys.exit(1)
-
-        # TODO step 8: save or roll back
         # TODO step 9: write reports/report_<timestamp>.json and the log file
-        print("\nSave/rollback are not written yet: running config changed but NOT saved.")
+        print_summary(list(changes), statuses)
+        for status in statuses.values():
+            if status != "SAVED":
+                sys.exit(1)
     finally:
         disconnect_all(connections)
 
