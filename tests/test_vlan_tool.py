@@ -3,17 +3,18 @@
 No real switches: Netmiko's ConnectHandler is replaced with FakeSwitch,
 which answers show commands with the hand-written sample files.
 NOT YET VERIFIED ON IOSvL2: still needs a real run in GNS3 (TC01, TC02, TC10).
-The flash copy prompts and the canned config output below are guesses from
-normal IOS behaviour, not captured from our switches.
+FLASH_PROMPTS and the canned config output below are guesses from normal IOS
+behaviour; the real_flash_lines() tests use real SW2 flash copy text (4 Nov).
 """
 
 import json
 import os
+import re
 from unittest import mock
 
 import pytest
 import yaml
-from netmiko import NetmikoAuthenticationException, NetmikoTimeoutException
+from netmiko import NetmikoAuthenticationException, NetmikoTimeoutException, ReadTimeout
 
 import vlan_tool
 from conftest import read_sample
@@ -35,7 +36,7 @@ SAMPLES = {
 }
 
 # What IOS prints for "copy running-config flash:pre_change.cfg" when the file
-# already exists: one reply per send_command_timing call.
+# already exists: one reply per step (the copy command, then each Enter).
 FLASH_PROMPTS = [
     "Destination filename [pre_change.cfg]? ",
     "Do you want to over write? [confirm]",
@@ -55,11 +56,14 @@ class FakeSwitch:
     def __init__(self, host, prompt="SW#"):
         self.host = host
         self.prompt = prompt
+        self.base_prompt = prompt[:-1]   # what Netmiko keeps: "SW2#" -> "SW2"
         self.sent = []          # every show command we received
         self.config_sent = []   # anything sent as config (must stay empty)
         self.disconnected = False
-        self.timing_sent = []   # flash copy command and the Enter answers
+        self.flash_sent = []    # (command, expect_string, read_timeout) per flash copy step
+        self.timing_sent = []   # send_command_timing calls (vlan_tool no longer makes any)
         self.flash_replies = list(FLASH_PROMPTS)
+        self.silent_seconds = 0  # quiet time before "bytes copied" / "[OK]" (real copy: 7 to 13 s)
         self.config_output = CLEAN_CONFIG_OUTPUT
         self.outputs = {}       # {show command: text}, overrides the answers below
         self.after_config = {}  # {show command: text} that replaces outputs once config is sent
@@ -68,7 +72,19 @@ class FakeSwitch:
     def find_prompt(self):
         return self.prompt
 
-    def send_command(self, command):
+    def flash_step(self, command, expect_string, read_timeout):
+        """Acts like Netmiko's send_command(expect_string=...): returns the reply once
+        the pattern shows up, or raises ReadTimeout if it does not come in time."""
+        self.flash_sent.append((command, expect_string, read_timeout))
+        reply = self.flash_replies.pop(0)
+        quiet = self.silent_seconds if "bytes copied" in reply else 0
+        if quiet >= read_timeout or not re.search(expect_string, reply):
+            raise ReadTimeout("pattern %r not seen within %s s" % (expect_string, read_timeout))
+        return reply
+
+    def send_command(self, command, expect_string=None, read_timeout=10, **kwargs):
+        if command in ("copy running-config flash:pre_change.cfg", "\n"):
+            return self.flash_step(command, expect_string, read_timeout)
         self.sent.append(command)
         if command in self.outputs:
             return self.outputs[command]
@@ -89,16 +105,27 @@ class FakeSwitch:
         raise AssertionError("unexpected command: " + command)
 
     def send_command_timing(self, command):
+        # Netmiko stops reading after 2 s of silence (last_read=2.0), so a slow
+        # "bytes copied" never reaches the caller. This is why vlan_tool stopped using it.
         self.timing_sent.append(command)
-        return self.flash_replies.pop(0)
+        reply = self.flash_replies.pop(0)
+        if self.silent_seconds > 2 and "bytes copied" in reply:
+            return ""
+        return reply
 
     def send_config_set(self, commands):
         self.config_sent.append(commands)
         self.outputs.update(self.after_config)
         return self.config_output
 
-    def save_config(self):
+    def save_config(self, cmd="write mem", confirm=False):
+        # Netmiko: confirm=False waits for the prompt (read_timeout=100);
+        # confirm=True uses send_command_timing, which gives up after 2 s of silence.
         self.config_sent.append("write memory")
+        if confirm and self.silent_seconds > 2:
+            return "write memory\nBuilding configuration...\n"
+        if self.silent_seconds >= 100:
+            raise ReadTimeout("write memory: no prompt within 100 s")
         return self.save_output
 
     def disconnect(self):
@@ -262,11 +289,17 @@ def test_apply_invalid_input_fails_with_that_line(capsys):
     assert fake.config_sent != [] and "write memory" not in fake.config_sent
 
 
+def flash_commands(fake):
+    """Just the commands of each flash copy step, e.g. [copy, Enter, Enter]."""
+    return [command for command, expect_string, read_timeout in fake.flash_sent]
+
+
 def test_apply_answers_flash_prompts():
     fake = FakeSwitch("192.168.99.12")
     vlan_tool.apply(fake, "SW2", ["vlan 10"])
     # Copy command, then Enter for the filename, then Enter for overwrite.
-    assert fake.timing_sent == ["copy running-config flash:pre_change.cfg", "\n", "\n"]
+    assert flash_commands(fake) == ["copy running-config flash:pre_change.cfg", "\n", "\n"]
+    assert fake.timing_sent == []
 
 
 def test_apply_flash_copy_new_file_needs_one_enter():
@@ -274,7 +307,7 @@ def test_apply_flash_copy_new_file_needs_one_enter():
     fake = FakeSwitch("192.168.99.12")
     fake.flash_replies = ["Destination filename [pre_change.cfg]? ", "2048 bytes copied in 0.3 secs\nSW#"]
     assert vlan_tool.apply(fake, "SW2", ["vlan 10"])["ok"] is True
-    assert fake.timing_sent == ["copy running-config flash:pre_change.cfg", "\n"]
+    assert flash_commands(fake) == ["copy running-config flash:pre_change.cfg", "\n"]
 
 
 def test_apply_flash_error_sends_nothing():
@@ -290,30 +323,87 @@ def test_apply_flash_error_sends_nothing():
 def real_flash_lines(copy_number):
     """Lines SW2 printed for copy 1 (no file yet) or copy 2 (file exists), real capture 4 Nov.
 
-    Checks the TEXT only. On the real switch the copy is silent for 7 to 13 s
-    before "bytes copied"; FakeSwitch answers at once, so it cannot show that delay.
+    The real silence before "bytes copied" (13.4 s, 6.8 s on overwrite) is set
+    with FakeSwitch.silent_seconds in the tests that need it.
     """
     text = read_sample("real/SW2_flash_copy_and_gi01.txt")
     output = text.split("SW2#copy running-config flash:pre_change.cfg\n")[copy_number]
     return output.split("SW2#")[0].splitlines()
 
 
+def real_sw2_fake(copy_number, silent_seconds=0):
+    """A FakeSwitch with prompt SW2# that answers the flash copy with SW2's real text."""
+    lines = real_flash_lines(copy_number)
+    fake = FakeSwitch("192.168.99.12", prompt="SW2#")
+    if copy_number == 1:
+        fake.flash_replies = [lines[0], lines[1] + "\nSW2#"]
+    else:
+        fake.flash_replies = [lines[0], lines[1] + "\n" + lines[2], lines[3] + "\nSW2#"]
+    fake.silent_seconds = silent_seconds
+    return fake
+
+
 def test_apply_real_sw2_first_flash_copy():
-    lines = real_flash_lines(1)   # filename prompt, bytes copied
-    fake = FakeSwitch("192.168.99.12")
-    fake.flash_replies = [lines[0], lines[1] + "\nSW2#"]
+    fake = real_sw2_fake(1)   # filename prompt, bytes copied
     assert vlan_tool.apply(fake, "SW2", ["vlan 10"])["ok"] is True
-    assert fake.timing_sent == ["copy running-config flash:pre_change.cfg", "\n"]
+    assert flash_commands(fake) == ["copy running-config flash:pre_change.cfg", "\n"]
 
 
 def test_apply_real_sw2_overwrite_warning_is_not_an_error():
-    lines = real_flash_lines(2)   # filename prompt, %Warning, [confirm], bytes copied
-    assert lines[1] == "%Warning:There is a file already existing with this name"
-    fake = FakeSwitch("192.168.99.12")
-    fake.flash_replies = [lines[0], lines[1] + "\n" + lines[2], lines[3] + "\nSW2#"]
+    assert real_flash_lines(2)[1] == "%Warning:There is a file already existing with this name"
+    fake = real_sw2_fake(2)   # filename prompt, %Warning, [confirm], bytes copied
     result = vlan_tool.apply(fake, "SW2", ["vlan 10"])
     assert result["ok"] is True and result["error_line"] == ""
-    assert fake.timing_sent == ["copy running-config flash:pre_change.cfg", "\n", "\n"]
+    assert flash_commands(fake) == ["copy running-config flash:pre_change.cfg", "\n", "\n"]
+
+
+# ---------- Step 6: a slow flash copy (real SW2: silent 13.4 s, or 6.8 s on overwrite) ----------
+# The first two tests FAIL on the old send_command_timing code, which stopped after 2 s of silence.
+
+def test_apply_waits_for_silent_first_copy():
+    fake = real_sw2_fake(1, silent_seconds=13.4)
+    result = vlan_tool.apply(fake, "SW2", ["vlan 10"])
+    assert result["ok"] is True
+    assert fake.config_sent == [["vlan 10"]]
+
+
+def test_apply_waits_for_silent_overwrite_copy():
+    fake = real_sw2_fake(2, silent_seconds=6.8)
+    result = vlan_tool.apply(fake, "SW2", ["vlan 10"])
+    assert result["ok"] is True
+    assert fake.config_sent == [["vlan 10"]]
+
+
+def test_apply_flash_silent_too_long_sends_nothing(capsys):
+    """No reply within 60 s: apply fails cleanly (no crash) and sends no config."""
+    fake = real_sw2_fake(1, silent_seconds=90)
+    result = vlan_tool.apply(fake, "SW2", ["vlan 10"])
+    assert result["ok"] is False and result["sent"] is False
+    assert "no 'bytes copied' line" in result["error_line"]
+    assert fake.config_sent == []
+    assert "[6/9] Apply SW2 ... FAILED" in capsys.readouterr().out
+
+
+def test_flash_waits_for_this_switch_prompt_only():
+    fake = real_sw2_fake(2, silent_seconds=6.8)
+    vlan_tool.apply(fake, "SW2", ["vlan 10"])
+    assert len(fake.flash_sent) == 3
+    for command, expect_string, read_timeout in fake.flash_sent:
+        assert re.search(expect_string, "SW2#")
+        # A bare "#" or another switch's prompt must not end the wait.
+        assert not re.search(expect_string, "#")
+        assert not re.search(expect_string, "SW3#")
+    # The copy runs after each Enter, so those two steps wait up to 60 s.
+    assert [read_timeout for command, expect_string, read_timeout in fake.flash_sent[1:]] == [60, 60]
+
+
+def test_save_waits_for_silent_ok():
+    """Guard (passes on old and new code): Netmiko's save_config() waits for the
+    prompt for up to 100 s, so a quiet "Building configuration..." still ends in [OK]."""
+    fake = FakeSwitch("192.168.99.12")
+    fake.silent_seconds = 13.4
+    result = vlan_tool.save_or_rollback(fake, "SW2", True, [])
+    assert result["ok"] is True
 
 
 def test_apply_flash_without_bytes_copied_sends_nothing():
@@ -358,7 +448,7 @@ def test_main_stops_after_first_failed_switch(switches, monkeypatch, capsys):
     assert sw1_config[1][-1] == "no vlan 10"           # undo runs in reverse order
     for host in ["192.168.99.12", "192.168.99.13", "192.168.99.14", "192.168.99.15"]:
         assert switches[host].config_sent == []
-        assert switches[host].timing_sent == []     # not even the flash copy
+        assert switches[host].flash_sent == []     # not even the flash copy
     for fake in switches.values():
         assert "write memory" not in fake.config_sent
         assert fake.disconnected
@@ -495,7 +585,7 @@ def test_main_stops_when_verify_fails(switches, capsys):
     assert len(switches["192.168.99.11"].config_sent) == 2   # commands, then undo
     for host in ["192.168.99.12", "192.168.99.13", "192.168.99.14", "192.168.99.15"]:
         assert switches[host].config_sent == []
-        assert switches[host].timing_sent == []
+        assert switches[host].flash_sent == []
     for fake in switches.values():
         assert "write memory" not in fake.config_sent
         assert fake.disconnected
@@ -661,7 +751,7 @@ def test_main_sw1_saved_sw2_rolled_back(switches, monkeypatch, capsys):
     assert "write memory" not in switches["192.168.99.12"].config_sent
     for host in ["192.168.99.13", "192.168.99.14", "192.168.99.15"]:
         assert switches[host].config_sent == []
-        assert switches[host].timing_sent == []
+        assert switches[host].flash_sent == []
 
 
 # ---------- Step 9: report and log ----------

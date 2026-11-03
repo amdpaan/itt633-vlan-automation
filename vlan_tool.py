@@ -12,6 +12,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -20,6 +21,7 @@ from netmiko import (
     ConnectHandler,
     NetmikoAuthenticationException,
     NetmikoTimeoutException,
+    ReadTimeout,
 )
 
 from parsers import (
@@ -180,16 +182,32 @@ def print_changes(switch, commands, undo):
 def copy_to_flash(conn):
     """Copy the running config to flash:pre_change.cfg (backup on the switch).
 
-    IOS asks "Destination filename [pre_change.cfg]?" and, if the file
-    already exists, "Do you want to over write? [confirm]". We answer both
-    with Enter. These prompts are NOT yet seen on our real IOSvL2.
-    send_command_timing is used because these prompts do not end in '#'.
+    Real SW2 output (4 Nov): "Destination filename [pre_change.cfg]?" and, if the
+    file already exists, "%Warning:There is a file already existing with this name"
+    and "Do you want to over write? [confirm]". We answer both with Enter.
+    The copy is then silent for 7 to 13 s before "3611 bytes copied in 13.375 secs".
+    send_command waits for an expected pattern (up to 60 s here); send_command_timing
+    stops after 2 s of silence and would miss "bytes copied".
     """
-    output = conn.send_command_timing("copy running-config flash:pre_change.cfg")
-    if "Destination filename" in output:
-        output += conn.send_command_timing("\n")
-    if "[confirm]" in output:
-        output += conn.send_command_timing("\n")
+    # This switch's own prompt, e.g. "SW2#" (base_prompt is "SW2"), so a stray "#" does not end the wait.
+    prompt = re.escape(conn.base_prompt) + "#"
+    output = ""
+    try:
+        # Matches "Destination filename [pre_change.cfg]?" or "SW2#" (after an instant %Error).
+        output += conn.send_command("copy running-config flash:pre_change.cfg",
+                                    expect_string=r"Destination filename \[\S+\]\?|" + prompt,
+                                    strip_prompt=False, strip_command=False)
+        if "Destination filename" in output:
+            # Matches "Do you want to over write? [confirm]" or "SW2#" after "bytes copied".
+            output += conn.send_command("\n", expect_string=r"\[confirm\]|" + prompt,
+                                        read_timeout=60, strip_prompt=False, strip_command=False)
+        if "[confirm]" in output:
+            # Matches "SW2#" after "3611 bytes copied in 6.801 secs (531 bytes/sec)".
+            output += conn.send_command("\n", expect_string=prompt,
+                                        read_timeout=60, strip_prompt=False, strip_command=False)
+    except ReadTimeout:
+        # No expected reply in time: apply() then fails with "no 'bytes copied' line".
+        output += "\n(no reply from the switch within the time limit)"
     return output
 
 
@@ -211,7 +229,7 @@ def apply(conn, switch_name, commands):
     result = {"ok": False, "output": "", "error_line": "", "sent": False}
 
     # No flash backup = stop before sending anything.
-    # "bytes copied" is the normal IOS success line (NOT yet seen on our IOSvL2).
+    # "bytes copied" is the IOS success line (seen on SW2, 4 Nov).
     copy_output = copy_to_flash(conn)
     log_output("copy running-config flash:pre_change.cfg", copy_output)
     copy_error = find_ios_error(copy_output, ["%Error"])
