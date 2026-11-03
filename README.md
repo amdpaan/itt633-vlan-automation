@@ -51,13 +51,25 @@ Each member's work is recorded in [CONTRIBUTIONS.md](CONTRIBUTIONS.md).
 | `vlan_tool.py` | Main script (command line, talks to the switches) |
 | `tests/` | pytest tests, sample `show` output, and fake switches for vlan_tool.py |
 
-## Setup (Mac, Windows or Linux)
+## Setup (Mac or Linux, including the Kali automation host)
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+On Kali, always use the venv: Kali refuses `pip install` outside one
+("externally-managed-environment"). If `python3 -m venv` fails, run
+`sudo apt install python3-venv` first.
+
+## Automation host (Kali Linux VM)
+
+The tool runs on a Kali VM connected to SW1 GigabitEthernet1/0 (VLAN 99) through a GNS3 Cloud node.
+Before running the tool:
+
+1. Kali has 192.168.99.101/24 on the interface that faces the Cloud.
+2. Kali can ping every switch: 192.168.99.11 to 192.168.99.15.
 
 ## Run the tests (no switches needed)
 
@@ -67,11 +79,23 @@ python -m pytest
 
 ## Run the tool
 
+Activate the venv first (`source .venv/bin/activate`). Both `--plan` and `--inventory` are required.
+
 ```bash
+# Dry-run: prints the commands and undo list per switch, sends nothing
 python vlan_tool.py --plan plan.yaml --inventory inventory.yaml --dry-run
+
+# Real run: apply, verify, save or roll back.
+# Only after the dry-run output has been checked.
+python vlan_tool.py --plan plan.yaml --inventory inventory.yaml
 ```
 
 The username and password are asked at run time and are never saved to a file.
+Output goes to `backups/`, `reports/` and `logs/`. These folders are not in Git,
+so copy the files you need as evidence by hand.
+
+`plan_tc09_bad_port.yaml` is for test TC09 only (a bad port on SW3, which must be rolled back).
+Run it in real-run mode, only from a restored baseline snapshot, after the good run has passed.
 
 Before running, the manual baseline must be in place on every switch
 (hostname, `vtp mode transparent`, VLAN 99 and SVI, local user with privilege 15, SSH, trunks allowing VLAN 99, and

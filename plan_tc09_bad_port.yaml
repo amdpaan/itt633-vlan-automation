@@ -1,0 +1,33 @@
+# TC09 ONLY: a copy of plan.yaml with one bad port added on SW3.
+# GigabitEthernet0/9 does not exist on IOSvL2 (ports are Gi0/0 to Gi3/3),
+# so IOS rejects it at apply and the tool must undo every SW3 change.
+# Run in apply mode (no --dry-run), only from a restored baseline snapshot,
+# and only after the first good run with plan.yaml has passed.
+# Expected: SW1 and SW2 SAVED, SW3 ROLLED_BACK (not saved), SW4 and SW5 NOT_RUN,
+# and SSH to SW3 still works afterwards.
+# Keep everything else identical to plan.yaml (a pytest checks this).
+vlans:
+  - {id: 10, name: Sales}
+  - {id: 20, name: IT}
+  - {id: 30, name: Guest}
+  - {id: 40, name: Finance}
+switches:
+  SW1:
+    trunks:
+      GigabitEthernet0/1: [10, 20, 30, 40]    # to SW2 Gi0/0
+      GigabitEthernet0/2: [10, 20, 30, 40]    # to SW3 Gi0/0
+      GigabitEthernet0/3: [10, 20, 30, 40]    # to SW4 Gi0/0
+      GigabitEthernet1/1: [10, 20, 30, 40]    # to SW5 Gi0/0
+  SW2:
+    access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 20}
+    trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
+  SW3:
+    # Gi0/9 is the bad port; Gi0/1 and Gi0/2 stay so the rollback has real work to undo.
+    access: {GigabitEthernet0/1: 10, GigabitEthernet0/2: 40, GigabitEthernet0/9: 40}
+    trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
+  SW4:
+    access: {GigabitEthernet0/1: 20, GigabitEthernet0/2: 30}
+    trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}
+  SW5:
+    access: {GigabitEthernet0/1: 40, GigabitEthernet0/2: 30}
+    trunks: {GigabitEthernet0/0: [10, 20, 30, 40]}

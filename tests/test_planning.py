@@ -49,6 +49,15 @@ def test_real_plan_is_valid():
     assert validate_plan(PLAN, INVENTORY) == []
 
 
+def test_tc09_plan_is_valid_and_only_adds_bad_port():
+    """TC09 must fail at apply on the switch, not be refused at step 1."""
+    tc09 = load_yaml(os.path.join(PROJECT_DIR, "plan_tc09_bad_port.yaml"))
+    assert validate_plan(tc09, INVENTORY) == []
+    # Apart from the bad port, it must stay identical to plan.yaml.
+    del tc09["switches"]["SW3"]["access"]["GigabitEthernet0/9"]
+    assert tc09 == PLAN
+
+
 def test_plan_matches_inventory():
     """Both files list the same five switches, in processing order SW1 to SW5."""
     assert list(PLAN["switches"]) == ["SW1", "SW2", "SW3", "SW4", "SW5"]

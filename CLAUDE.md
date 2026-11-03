@@ -26,7 +26,7 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 - Lab: GNS3 (2.2.x) with the GNS3 VM, running on a Windows PC or the faculty lab computers. Cisco x86 images do not run well on Apple Silicon.
 - **Paan does not run GNS3.** A friend runs the lab and sends back saved output, screenshots or error messages. Paan then adds them to the repo or pastes them into the session. Anything that needs the lab (running the tool, show commands, pings, test-case evidence) goes through that friend.
 - Switch image: Cisco **IOSvL2 15.2** in GNS3 (replaced IOL-L2; manual baseline confirmed working 24 Oct 2026, tool not yet run on it). Interface names are `GigabitEthernet0/0`, `GigabitEthernet0/1`, and so on (short form `Gi0/x` in show output). Old IOL-L2 names map as e0/0->Gi0/0, e0/1->Gi0/1, e0/2->Gi0/2, e0/3->Gi0/3, e1/0->Gi1/0. If the image changes again, only plan.yaml and `PROTECTED_PORTS` in planning.py should need to change.
-- End hosts: VPCS. The automation host joins VLAN 99 through a GNS3 Cloud node (method still to be tested, for example a Windows loopback adapter).
+- End hosts: VPCS. The automation host is a **Kali Linux VM** (192.168.99.101) joined to VLAN 99 through a GNS3 Cloud node on SW1 Gi1/0 (decided 3 Nov 2026; replaces the earlier Windows host and .100). SSH from Kali to the switches is not yet tested.
 - **The manual baseline was verified on real IOSvL2 (24 Oct). The Python tool has not yet run against a real switch.** Never claim that code or commands work on the switches. Say what still needs testing in GNS3.
 
 ## Network design
@@ -46,7 +46,7 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 | SW3 (access) | SVI vlan 99 | 99 | 192.168.99.13 |
 | SW4 (access) | SVI vlan 99 | 99 | 192.168.99.14 |
 | SW5 (access) | SVI vlan 99 | 99 | 192.168.99.15 |
-| Automation host | SW1 GigabitEthernet1/0 | 99 | 192.168.99.100 |
+| Automation host (Kali VM) | SW1 GigabitEthernet1/0 | 99 | 192.168.99.101 |
 | PC1 Sales | SW2 GigabitEthernet0/1 | 10 | 192.168.10.10 |
 | PC2 IT | SW2 GigabitEthernet0/2 | 20 | 192.168.20.10 |
 | PC3 Sales | SW3 GigabitEthernet0/1 | 10 | 192.168.10.11 |
@@ -219,14 +219,21 @@ This code will be explained live to a lecturer by any of 4 students.
 - When a step needs the lab, write a short, numbered instruction sheet that Paan can forward to the friend. It should give the exact commands to run on each switch or on the automation host, and say what to save and how to name each file (for example `sw1_show_vlan_brief_real.txt`). Do not assume Paan can run or check anything in GNS3 directly.
 - Commit and push only when Paan asks. When asked to see the diff first, stage the changes, show the diff, and wait before committing.
 
-## Current status (handoff, last updated 2 Nov 2026)
+## Current status (handoff, last updated 3 Nov 2026)
 
 Read this section first in a new session. `git log` has the full history.
+
+### Decided 3 Nov 2026 (with Paan)
+
+- Automation host = Kali Linux VM at 192.168.99.101 on SW1 Gi1/0 via the GNS3 Cloud. Windows is no longer used as the host. No code or YAML uses the host IP.
+- Run order: first lab run is `--dry-run` (TC01, TC02); first real run is the good `plan.yaml`; TC09 comes only after that passes.
+- TC09 = `plan_tc09_bad_port.yaml` (plan.yaml + nonexistent SW3 Gi0/9), apply mode, run from a restored baseline snapshot so SW3 has real changes to roll back. Expected: SW1, SW2 SAVED; SW3 ROLLED_BACK; SW4, SW5 NOT_RUN. `test_tc09_plan_is_valid_and_only_adds_bad_port` keeps it in sync with plan.yaml.
+- No SSH algorithm settings (Netmiko or OpenSSH) unless the real run fails on them.
 
 ### Lab status (real IOSvL2 15.2, 24 Oct 2026, run by a group member)
 
 - Manual baseline proven: it ran on SW1 to SW5 with no `%` errors. SW1 pings 192.168.99.12 to .15 at 100%. CDP on SW1 shows SW2 on Gi0/1, SW3 on Gi0/2, SW4 on Gi0/3 and SW5 on Gi1/1, each on remote Gi0/0.
-- The Python tool has **not** run on the lab yet (Windows SSH from the automation host is the next lab step).
+- The Python tool has **not** run on the lab yet (SSH from the Kali automation host is the next lab step).
 - Quirk: `show interfaces trunk` printed the "Vlans in spanning tree forwarding state and not pruned" section twice (Gi0/1 to Gi0/3, then Gi1/1 under a second header). `parse_trunk_allowed()` reads only the "Vlans allowed on trunk" section, so it is not affected. Regression test: `test_trunk_repeated_stp_header_iosvl2` on `tests/samples/transcribed/SW1_show_interfaces_trunk.txt` (typed from a screenshot, not a raw capture). The raw SW1 capture in `tests/samples/real/` (2 Nov) does **not** show the repeated header; it has one clean header per section. Keep the transcribed test anyway.
 - Native VLAN is 1 on all trunks (baseline default). The tool does not touch the native VLAN.
 - Raw baseline captures are in `tests/samples/real/` (2 Nov, 30 files: SW1 to SW5 x show vlan brief, show interfaces trunk, show interfaces switchport, show ip interface brief, show running-config, show version; passwords redacted). `tests/test_parsers_real.py` runs the parsers on all of them. `parse_vlan_brief` and `parse_trunk_allowed` worked unchanged; `parse_switchport_all()` was added because the all-ports output has 16 blocks per switch.
@@ -252,7 +259,7 @@ Read this section first in a new session. `git log` has the full history.
   - Step 9: `write_report()` writes `reports/report_<YYYYmmdd_HHMMSS>.json` on every ending (pre-check fail, step-4 unsafe-state stop, dry-run, rollback stop, full pass, unexpected error) from `main()`'s `finally`. Top level: started, finished, total_seconds, dry_run, plan_file, stop_reason. Per switch, in inventory order: name, ip, status, seconds, commands_sent (apply then undo, only what really reached the switch), mismatches, error_lines, backup_file, planned_commands, undo_list. Dry-run = NOT_CHANGED for all; pre-check fail = UNREACHABLE (reason in error_lines) + NOT_RUN. `new_run_name()` adds `_2`, `_3` when two runs share a second. `run_switch()` sets IN_PROGRESS before apply (before the flash copy); a normal return overwrites it, so only a crash (e.g. SSH drops) leaves IN_PROGRESS in the report, with the error in `stop_reason`.
   - Log: `say()` prints and appends to `logs/run_<same timestamp>.log`; `log_output()` adds raw device output (show commands via `show()`, flash copy, send_config_set for apply and undo, write memory) to the log only. `show running-config` is never logged (password hash); it stays in `backups/`. No username or password goes into the report or the log.
   - `main()` is about 94 lines (over the 30-line guideline). It is the first item of the simplicity pass below.
-- 119 pytest tests: `tests/test_parsers.py`, `tests/test_parsers_real.py` (real IOSvL2 baseline output, 30 tests), `tests/test_planning.py`, `tests/test_vlan_tool.py`.
+- 120 pytest tests: `tests/test_parsers.py`, `tests/test_parsers_real.py` (real IOSvL2 baseline output, 30 tests), `tests/test_planning.py`, `tests/test_vlan_tool.py`.
   - `tests/test_vlan_tool.py` replaces Netmiko's `ConnectHandler` with a `FakeSwitch` class that answers with the sample files. SW3 to SW5 reuse SW2's samples.
   - To try a dry-run without switches, patch `vlan_tool.ConnectHandler`, `vlan_tool.ask_credentials` and `vlan_tool.BACKUP_DIR`, `REPORT_DIR`, `LOG_DIR` the same way (the autouse `output_dirs` fixture does this for every test, so tests never write into the repo).
 
@@ -260,7 +267,7 @@ Read this section first in a new session. `git log` has the full history.
 
 1. GNS3 lab (run by Paan's friend, not Paan): baseline is done (see Lab status); next is SSH from the automation host, then TC01 and TC02. Baseline captures are in and tested; still to capture: `show running-config interface <port>` and the show outputs after a run (VLANs 10 to 40 present).
 2. Lab check for step 6: capture the real `copy running-config flash:pre_change.cfg` output (first run and second run, when the file exists) to confirm the prompts and the "bytes copied" line.
-3. First lab dry-run (TC02) with the full tool; then decide the first real run with Paan.
+3. First lab dry-run (TC02) with the full tool; then the first real run with `plan.yaml`; then TC09 from a restored baseline snapshot (see "Decided 3 Nov").
 
 ### Simplicity pass (to do, items in order)
 
@@ -271,7 +278,6 @@ Read this section first in a new session. `git log` has the full history.
 - The tool has not run on real IOSvL2 (only the manual baseline has). The samples directly in `tests/samples/` are hand-written; `real/` holds raw baseline captures and `transcribed/` is typed from a real screenshot. `parse_interface_config()` is still unverified.
 - Assumed and not yet confirmed by the group:
   - The VLAN 40 subnet is 192.168.40.0/24.
-  - The automation host stays on SW1 GigabitEthernet1/0.
 - Possible lab issues:
   - `show running-config` may be slow on IOSvL2, so Netmiko timeouts may need raising.
   - The local user must be privilege 15.
