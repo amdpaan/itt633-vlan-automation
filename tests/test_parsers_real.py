@@ -105,3 +105,34 @@ def test_real_switchport_access_switch_values(switch):
         assert ports[pc_port] == {"admin_mode": "dynamic auto", "oper_mode": "static access", "access_vlan": 1}
     # Gi1/0 comes right after a down port (Gi0/3).
     assert ports["GigabitEthernet1/0"] == {"admin_mode": "dynamic auto", "oper_mode": "down", "access_vlan": 1}
+
+
+# ---------- the tool's own log from the first real dry-run (Kali, 4 Nov) ----------
+
+def log_section(switch, command):
+    """Cut one switch's '----- <command> -----' block out of run_20261103_113312.log."""
+    text = read_sample("real/run_20261103_113312.log")
+    after_switch = text.split(f"{switch}: backup saved")[1]
+    return after_switch.split(f"----- {command} -----")[1].split("----- end -----")[0]
+
+
+def test_dryrun_log_trunk_single_stp_header_sw1():
+    """Here the STP section prints once; the 24 Oct screenshot had it twice
+    (test_trunk_repeated_stp_header_iosvl2). The parser must handle both."""
+    output = log_section("SW1", "show interfaces trunk")
+    assert output.count("Vlans in spanning tree forwarding state") == 1
+    assert parse_trunk_allowed(output) == {"GigabitEthernet0/1": [99], "GigabitEthernet0/2": [99],
+                                           "GigabitEthernet0/3": [99], "GigabitEthernet1/1": [99]}
+
+
+@pytest.mark.parametrize("switch", ACCESS_SWITCHES)
+def test_dryrun_log_trunk_access_switch(switch):
+    assert parse_trunk_allowed(log_section(switch, "show interfaces trunk")) == {"GigabitEthernet0/0": [99]}
+
+
+def test_dryrun_log_vlan_brief_ports_on_one_line():
+    """Through Netmiko the port list is one long line, not wrapped as on the console."""
+    vlans = parse_vlan_brief(log_section("SW1", "show vlan brief"))
+    assert sorted(vlans) == [1, 99, 1002, 1003, 1004, 1005]
+    assert vlans[99]["ports"] == ["GigabitEthernet1/0"]
+    assert len(vlans[1]["ports"]) == 11

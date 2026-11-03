@@ -287,6 +287,35 @@ def test_apply_flash_error_sends_nothing():
     assert fake.config_sent == []
 
 
+def real_flash_lines(copy_number):
+    """Lines SW2 printed for copy 1 (no file yet) or copy 2 (file exists), real capture 4 Nov.
+
+    Checks the TEXT only. On the real switch the copy is silent for 7 to 13 s
+    before "bytes copied"; FakeSwitch answers at once, so it cannot show that delay.
+    """
+    text = read_sample("real/SW2_flash_copy_and_gi01.txt")
+    output = text.split("SW2#copy running-config flash:pre_change.cfg\n")[copy_number]
+    return output.split("SW2#")[0].splitlines()
+
+
+def test_apply_real_sw2_first_flash_copy():
+    lines = real_flash_lines(1)   # filename prompt, bytes copied
+    fake = FakeSwitch("192.168.99.12")
+    fake.flash_replies = [lines[0], lines[1] + "\nSW2#"]
+    assert vlan_tool.apply(fake, "SW2", ["vlan 10"])["ok"] is True
+    assert fake.timing_sent == ["copy running-config flash:pre_change.cfg", "\n"]
+
+
+def test_apply_real_sw2_overwrite_warning_is_not_an_error():
+    lines = real_flash_lines(2)   # filename prompt, %Warning, [confirm], bytes copied
+    assert lines[1] == "%Warning:There is a file already existing with this name"
+    fake = FakeSwitch("192.168.99.12")
+    fake.flash_replies = [lines[0], lines[1] + "\n" + lines[2], lines[3] + "\nSW2#"]
+    result = vlan_tool.apply(fake, "SW2", ["vlan 10"])
+    assert result["ok"] is True and result["error_line"] == ""
+    assert fake.timing_sent == ["copy running-config flash:pre_change.cfg", "\n", "\n"]
+
+
 def test_apply_flash_without_bytes_copied_sends_nothing():
     fake = FakeSwitch("192.168.99.12")
     fake.flash_replies = ["SW#"]

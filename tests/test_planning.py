@@ -207,6 +207,29 @@ def test_port_with_old_config_is_restored_on_undo():
     ]
 
 
+def real_sw2_gi0_1_config():
+    """'show running-config int GigabitEthernet0/1' on SW2, real capture 4 Nov."""
+    text = read_sample("real/SW2_flash_copy_and_gi01.txt")
+    return text.split("SW2#show running-config int GigabitEthernet0/1")[1]
+
+
+def test_real_sw2_gi0_1_baseline_is_negotiation_auto():
+    assert parse_interface_config(real_sw2_gi0_1_config()) == ["negotiation auto"]
+
+
+def test_real_sw2_gi0_1_undo_restores_exactly_negotiation_auto():
+    # Only Gi0/1 was captured, so plan just that port on SW2.
+    plan = copy.deepcopy(PLAN)
+    plan["switches"]["SW2"]["access"] = {"GigabitEthernet0/1": 10}
+    vlans = parse_vlan_brief(read_sample("real/SW2_show_vlan_brief.txt"))
+    trunks = parse_trunk_allowed(read_sample("real/SW2_show_interfaces_trunk.txt"))
+    ports = {"GigabitEthernet0/1": parse_interface_config(real_sw2_gi0_1_config())}
+    commands, undo = build_changes("SW2", plan, vlans, trunks, ports)
+    assert commands[-3:] == ["interface GigabitEthernet0/1", "switchport mode access", "switchport access vlan 10"]
+    # Reset the port (removes the tool's lines), then put back its only old line.
+    assert undo[:3] == ["default interface GigabitEthernet0/1", "interface GigabitEthernet0/1", "negotiation auto"]
+
+
 def test_refuses_trunk_that_is_not_a_trunk():
     vlans, trunks, ports = sw1_baseline()
     del trunks["GigabitEthernet0/2"]

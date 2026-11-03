@@ -1,0 +1,36 @@
+SW2>en
+SW2#terminal length 0
+SW2#copy running-config flash:pre_change.cfg
+Destination filename [pre_change.cfg]?
+3611 bytes copied in 13.375 secs (270 bytes/sec)
+SW2#
+SW2#
+SW2#copy running-config flash:pre_change.cfg
+Destination filename [pre_change.cfg]?
+%Warning:There is a file already existing with this name
+Do you want to over write? [confirm]
+3611 bytes copied in 6.801 secs (531 bytes/sec)
+SW2#
+SW2#
+SW2#dir flash:
+Directory of flash0:/
+
+    1  drw-           0  Jan 30 2013 00:00:00 +00:00  boot
+  264  drw-           0  Oct 14 2013 00:00:00 +00:00  config
+  267  -rw-         567  Sep 29 2020 00:00:00 +00:00  eula.txt
+  268  -rw-   119857844  Sep 29 2020 00:00:00 +00:00  vios_l2-adventerprisek9-m
+  269  -rw-      524288  Oct 24 2026 07:04:56 +00:00  nvram
+  270  -rw-          35  Oct 24 2026 08:11:46 +00:00  pnp-tech-time
+  271  -rw-       77047  Oct 24 2026 08:11:48 +00:00  pnp-tech-discovery-summary
+  272  -rw-         325   Nov 1 2026 14:42:12 +00:00  e1000_bia.txt
+  273  -rw-        3611   Nov 3 2026 15:39:46 +00:00  pre_change.cfg
+
+2142715904 bytes total (2017632256 bytes free)
+SW2#show running-config int GigabitEthernet0/1
+Building configuration...
+
+Current configuration : 54 bytes
+!
+interface GigabitEthernet0/1
+ negotiation auto
+end
