@@ -219,7 +219,7 @@ This code will be explained live to a lecturer by any of 4 students.
 - When a step needs the lab, write a short, numbered instruction sheet that Paan can forward to the friend. It should give the exact commands to run on each switch or on the automation host, and say what to save and how to name each file (for example `sw1_show_vlan_brief_real.txt`). Do not assume Paan can run or check anything in GNS3 directly.
 - Commit and push only when Paan asks. When asked to see the diff first, stage the changes, show the diff, and wait before committing.
 
-## Current status (handoff, last updated 3 Nov 2026)
+## Current status (handoff, last updated 4 Nov 2026)
 
 Read this section first in a new session. `git log` has the full history.
 
@@ -229,6 +229,12 @@ Read this section first in a new session. `git log` has the full history.
 - Run order: first lab run is `--dry-run` (TC01, TC02); first real run is the good `plan.yaml`; TC09 comes only after that passes.
 - TC09 = `plan_tc09_bad_port.yaml` (plan.yaml + nonexistent SW3 Gi0/9), apply mode, run from a restored baseline snapshot so SW3 has real changes to roll back. Expected: SW1, SW2 SAVED; SW3 ROLLED_BACK; SW4, SW5 NOT_RUN. `test_tc09_plan_is_valid_and_only_adds_bad_port` keeps it in sync with plan.yaml.
 - No SSH algorithm settings (Netmiko or OpenSSH) unless the real run fails on them.
+
+### Lab result 4 Nov 2026: first dry-run from Kali failed at pre-check (all 5 switches)
+
+- paramiko 5.1.0 (pulled in because requirements.txt was not pinned) raised "Incompatible ssh peer (no acceptable kex algorithm)". IOSvL2 offers only diffie-hellman-group-exchange-sha1, group14-sha1, group1-sha1, host key ssh-rsa. paramiko 5.x removed all of these (the Mac's 5.0.0 too).
+- Fix: requirements.txt pinned with `==` (netmiko 4.6.0, paramiko 4.0.0, PyYAML 6.0.3, pytest 8.4.2). No tool code or algorithm settings changed. Checked on the Mac: paramiko 4.0.0 offers all four by default on Python 3.9.6 and 3.14.4, 120 tests pass on both, and it logs in to a local fake server offering only group14-sha1 + ssh-rsa (5.0.0 gets the same error as Kali). Not yet confirmed against the real switches. paramiko 4.0.0 will pick group-exchange-sha1 first with IOSvL2.
+- Kali must re-run `pip install -r requirements.txt` inside its venv (downgrades netmiko 4.8.0 and paramiko 5.1.0).
 
 ### Lab status (real IOSvL2 15.2, 24 Oct 2026, run by a group member)
 
@@ -284,6 +290,6 @@ Read this section first in a new session. `git log` has the full history.
 
 ### Tooling notes
 
-- Run tests with `.venv/bin/python -m pytest` (netmiko 4.6.0 is installed in `.venv`).
+- Run tests with `.venv/bin/python -m pytest` (`.venv` matches requirements.txt: netmiko 4.6.0, paramiko 4.0.0). Keep requirements.txt pinned with `==`; never move paramiko to 5.x while the switches are IOSvL2 15.2.
 - Code style: f-strings, and imports sorted per Ruff (`UP031`, `I001`). Ruff is not in `.venv`; the VS Code Ruff extension bundles it. The test files still use `%` formatting.
 - Add a row to CONTRIBUTIONS.md for each piece of work, marked "(AI-assisted)" where it applies.

@@ -1,3 +1,7 @@
-netmiko>=4.3,<5
-PyYAML>=6.0
-pytest>=7.0
+# Exact versions so every member (Mac and the Kali host) installs the same thing.
+netmiko==4.6.0
+# paramiko 5.x removed the SHA-1 key exchanges and the ssh-rsa host key, which are
+# the only ones IOSvL2 15.2 offers ("Incompatible ssh peer", 4 Nov 2026). 4.0.0 still has them.
+paramiko==4.0.0
+PyYAML==6.0.3
+pytest==8.4.2
