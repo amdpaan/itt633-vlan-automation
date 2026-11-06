@@ -1,15 +1,16 @@
 """Turn Cisco "show" output (plain text) into Python data.
 
-STATUS (2 Nov 2026):
-- Tested on real IOSvL2 15.2 baseline output from SW1 to SW5
-  (tests/samples/real/, tests/test_parsers_real.py):
-  parse_vlan_brief, parse_trunk_allowed, parse_switchport_all
-  (and parse_switchport, which it uses on each port's block).
-- NOT YET VERIFIED: parse_interface_config. No real
-  'show running-config interface <port>' capture yet. Note: on IOSvL2 an
-  unused port still shows ' negotiation auto', so a "blank" port is not [].
-- Real output so far is the baseline only (VLANs 1 and 99). Output after
-  the tool adds VLANs 10-40 has not been captured yet.
+STATUS (6 Nov 2026):
+- Tested on real IOSvL2 15.2 output (tests/samples/real/,
+  tests/test_parsers_real.py): parse_vlan_brief, parse_trunk_allowed,
+  parse_switchport_all (and parse_switchport, which it uses on each port's
+  block), on the baseline from SW1 to SW5 and on SW1 and SW2 after the
+  first real apply run (console captures and the SSH output in the run log).
+- Console output wraps long port lists in 'show vlan brief'; SSH output
+  (what the tool reads) does not. parse_vlan_brief handles both.
+- parse_interface_config: verified on one real port (SW2 Gi0/1, 4 Nov).
+  On IOSvL2 an unused port still shows ' negotiation auto', so a "blank"
+  port is not [].
 
 Nothing in this file talks to a switch, so it can be tested on the Mac.
 """

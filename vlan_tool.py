@@ -5,7 +5,9 @@ Usage:
 
 STATUS: all 9 steps are written (load, pre-check, backup, build changes,
 dry-run, apply, verify, save or roll back, report). They are tested with
-pytest using fake switches only, NOT on IOSvL2 in GNS3 yet.
+pytest using fake switches, and ran on real IOSvL2 15.2 in GNS3 (5 to 6 Nov):
+apply + verify + write memory on SW1 to SW5 (run_20261105_235328) and the
+TC09 rollback on SW3 (run_20261106_014041), logs in tests/samples/real/.
 """
 
 import argparse
@@ -465,8 +467,8 @@ def save_or_rollback(conn, switch_name, passed, undo_commands):
     if not passed:
         return rollback(conn, switch_name, undo_commands)
 
-    # "[OK]" is the normal IOS line after write memory
-    # (NOT yet seen through Netmiko on our IOSvL2).
+    # "[OK]" is the normal IOS line after write memory. Real IOSvL2 through
+    # Netmiko (5 Nov): "Compressed configuration from 4091 bytes to 2223 bytes[OK]".
     output = conn.save_config()
     log_output("write memory", output)
     ok = "[OK]" in output
@@ -646,7 +648,7 @@ def main(argv=None):
             access_ports = list((settings.get("access") or {}).keys())
             begin = time.monotonic()
 
-            # Step 3: backup (local file only; flash copy is still TODO).
+            # Step 3: backup to a local file (the flash copy happens in apply, step 6).
             backup_path, port_configs = backup_switch(switch, connection, access_ports, timestamp)
             say(f"{switch}: backup saved to {backup_path}")
             records[switch]["backup_file"] = backup_path

@@ -1,0 +1,258 @@
+Run 20261106_014707: dry-run, plan plan.yaml
+Plan OK: 4 VLANs, 5 switches
+Pre-check OK: all 5 switches reachable over SSH
+SW1: backup saved to backups/SW1_20261106_014707.cfg
+----- show vlan brief -----
+
+VLAN Name                             Status    Ports
+---- -------------------------------- --------- -------------------------------
+1    default                          active    Gi0/0, Gi1/2, Gi1/3, Gi2/0, Gi2/1, Gi2/2, Gi2/3, Gi3/0, Gi3/1, Gi3/2, Gi3/3
+10   Sales                            active    
+20   IT                               active    
+30   Guest                            active    
+40   Finance                          active    
+99   Management                       active    Gi1/0
+1002 fddi-default                     act/unsup 
+1003 token-ring-default               act/unsup 
+1004 fddinet-default                  act/unsup 
+1005 trnet-default                    act/unsup 
+----- end -----
+----- show interfaces trunk -----
+
+Port        Mode             Encapsulation  Status        Native vlan
+Gi0/1       on               802.1q         trunking      1
+Gi0/2       on               802.1q         trunking      1
+Gi0/3       on               802.1q         trunking      1
+Gi1/1       on               802.1q         trunking      1
+
+Port        Vlans allowed on trunk
+Gi0/1       10,20,30,40,99
+Gi0/2       10,20,30,40,99
+Gi0/3       10,20,30,40,99
+Gi1/1       10,20,30,40,99
+
+Port        Vlans allowed and active in management domain
+Gi0/1       10,20,30,40,99
+Gi0/2       10,20,30,40,99
+Gi0/3       10,20,30,40,99
+Gi1/1       10,20,30,40,99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi0/1       10,20,30,40,99
+Gi0/2       10,20,30,40,99
+Gi0/3       10,20,30,40,99
+Gi1/1       10,20,30,40,99
+----- end -----
+SW2: backup saved to backups/SW2_20261106_014707.cfg
+----- show vlan brief -----
+
+VLAN Name                             Status    Ports
+---- -------------------------------- --------- -------------------------------
+1    default                          active    Gi0/3, Gi1/0, Gi1/1, Gi1/2, Gi1/3, Gi2/0, Gi2/1, Gi2/2, Gi2/3, Gi3/0, Gi3/1, Gi3/2, Gi3/3
+10   Sales                            active    Gi0/1
+20   IT                               active    Gi0/2
+30   Guest                            active    
+40   Finance                          active    
+99   Management                       active    
+1002 fddi-default                     act/unsup 
+1003 token-ring-default               act/unsup 
+1004 fddinet-default                  act/unsup 
+1005 trnet-default                    act/unsup 
+----- end -----
+----- show interfaces trunk -----
+
+Port        Mode             Encapsulation  Status        Native vlan
+Gi0/0       on               802.1q         trunking      1
+
+Port        Vlans allowed on trunk
+Gi0/0       10,20,30,40,99
+
+Port        Vlans allowed and active in management domain
+Gi0/0       10,20,30,40,99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi0/0       10,20,30,40,99
+----- end -----
+SW3: backup saved to backups/SW3_20261106_014707.cfg
+----- show vlan brief -----
+
+VLAN Name                             Status    Ports
+---- -------------------------------- --------- -------------------------------
+1    default                          active    Gi0/1, Gi0/2, Gi0/3, Gi1/0, Gi1/1, Gi1/2, Gi1/3, Gi2/0, Gi2/1, Gi2/2, Gi2/3, Gi3/0, Gi3/1, Gi3/2, Gi3/3
+99   Management                       active    
+1002 fddi-default                     act/unsup 
+1003 token-ring-default               act/unsup 
+1004 fddinet-default                  act/unsup 
+1005 trnet-default                    act/unsup 
+----- end -----
+----- show interfaces trunk -----
+
+Port        Mode             Encapsulation  Status        Native vlan
+Gi0/0       on               802.1q         trunking      1
+
+Port        Vlans allowed on trunk
+Gi0/0       99
+
+Port        Vlans allowed and active in management domain
+Gi0/0       99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi0/0       99
+----- end -----
+SW4: backup saved to backups/SW4_20261106_014707.cfg
+----- show vlan brief -----
+
+VLAN Name                             Status    Ports
+---- -------------------------------- --------- -------------------------------
+1    default                          active    Gi0/1, Gi0/2, Gi0/3, Gi1/0, Gi1/1, Gi1/2, Gi1/3, Gi2/0, Gi2/1, Gi2/2, Gi2/3, Gi3/0, Gi3/1, Gi3/2, Gi3/3
+99   Management                       active    
+1002 fddi-default                     act/unsup 
+1003 token-ring-default               act/unsup 
+1004 fddinet-default                  act/unsup 
+1005 trnet-default                    act/unsup 
+----- end -----
+----- show interfaces trunk -----
+
+Port        Mode             Encapsulation  Status        Native vlan
+Gi0/0       on               802.1q         trunking      1
+
+Port        Vlans allowed on trunk
+Gi0/0       99
+
+Port        Vlans allowed and active in management domain
+Gi0/0       99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi0/0       99
+----- end -----
+SW5: backup saved to backups/SW5_20261106_014707.cfg
+----- show vlan brief -----
+
+VLAN Name                             Status    Ports
+---- -------------------------------- --------- -------------------------------
+1    default                          active    Gi0/1, Gi0/2, Gi0/3, Gi1/0, Gi1/1, Gi1/2, Gi1/3, Gi2/0, Gi2/1, Gi2/2, Gi2/3, Gi3/0, Gi3/1, Gi3/2, Gi3/3
+99   Management                       active    
+1002 fddi-default                     act/unsup 
+1003 token-ring-default               act/unsup 
+1004 fddinet-default                  act/unsup 
+1005 trnet-default                    act/unsup 
+----- end -----
+----- show interfaces trunk -----
+
+Port        Mode             Encapsulation  Status        Native vlan
+Gi0/0       on               802.1q         trunking      1
+
+Port        Vlans allowed on trunk
+Gi0/0       99
+
+Port        Vlans allowed and active in management domain
+Gi0/0       99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Gi0/0       99
+----- end -----
+
+=== SW1 ===
+Nothing to change.
+
+=== SW2 ===
+Nothing to change.
+
+=== SW3 ===
+Commands:
+  vlan 10
+  name Sales
+  vlan 20
+  name IT
+  vlan 30
+  name Guest
+  vlan 40
+  name Finance
+  interface GigabitEthernet0/0
+  switchport trunk allowed vlan add 10,20,30,40
+  interface GigabitEthernet0/1
+  switchport mode access
+  switchport access vlan 10
+  interface GigabitEthernet0/2
+  switchport mode access
+  switchport access vlan 40
+Undo list (runs only if verification fails):
+  default interface GigabitEthernet0/2
+  interface GigabitEthernet0/2
+  negotiation auto
+  default interface GigabitEthernet0/1
+  interface GigabitEthernet0/1
+  negotiation auto
+  interface GigabitEthernet0/0
+  switchport trunk allowed vlan remove 10,20,30,40
+  no vlan 40
+  no vlan 30
+  no vlan 20
+  no vlan 10
+
+=== SW4 ===
+Commands:
+  vlan 10
+  name Sales
+  vlan 20
+  name IT
+  vlan 30
+  name Guest
+  vlan 40
+  name Finance
+  interface GigabitEthernet0/0
+  switchport trunk allowed vlan add 10,20,30,40
+  interface GigabitEthernet0/1
+  switchport mode access
+  switchport access vlan 20
+  interface GigabitEthernet0/2
+  switchport mode access
+  switchport access vlan 30
+Undo list (runs only if verification fails):
+  default interface GigabitEthernet0/2
+  interface GigabitEthernet0/2
+  negotiation auto
+  default interface GigabitEthernet0/1
+  interface GigabitEthernet0/1
+  negotiation auto
+  interface GigabitEthernet0/0
+  switchport trunk allowed vlan remove 10,20,30,40
+  no vlan 40
+  no vlan 30
+  no vlan 20
+  no vlan 10
+
+=== SW5 ===
+Commands:
+  vlan 10
+  name Sales
+  vlan 20
+  name IT
+  vlan 30
+  name Guest
+  vlan 40
+  name Finance
+  interface GigabitEthernet0/0
+  switchport trunk allowed vlan add 10,20,30,40
+  interface GigabitEthernet0/1
+  switchport mode access
+  switchport access vlan 40
+  interface GigabitEthernet0/2
+  switchport mode access
+  switchport access vlan 30
+Undo list (runs only if verification fails):
+  default interface GigabitEthernet0/2
+  interface GigabitEthernet0/2
+  negotiation auto
+  default interface GigabitEthernet0/1
+  interface GigabitEthernet0/1
+  negotiation auto
+  interface GigabitEthernet0/0
+  switchport trunk allowed vlan remove 10,20,30,40
+  no vlan 40
+  no vlan 30
+  no vlan 20
+  no vlan 10
+
+Dry run: nothing was sent to the switches.
+[9/9] Report saved: reports/report_20261106_014707.json
