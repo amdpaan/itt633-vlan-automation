@@ -14,6 +14,7 @@ import re
 from unittest import mock
 
 import pytest
+import yaml
 from netmiko import NetmikoAuthenticationException, NetmikoTimeoutException, ReadTimeout
 
 import vlan_tool
@@ -161,6 +162,29 @@ def switches(tmp_path, monkeypatch):
 
     monkeypatch.setattr(vlan_tool, "ConnectHandler", fake_connect)
     return fakes
+
+
+# ---------- Step 1: read the files ----------
+
+def test_plan_refused_stops_before_ssh(switches, tmp_path, capsys):
+    """A plan that touches VLAN 99 stops at step 1: exit 1, no SSH, no backup, no report."""
+    plan = load_yaml(ARGS[1])
+    plan["vlans"].append({"id": MANAGEMENT_VLAN, "name": "Management"})
+    bad_plan = tmp_path / "plan_vlan99.yaml"
+    with open(bad_plan, "w") as f:
+        yaml.safe_dump(plan, f)
+
+    with pytest.raises(SystemExit) as exit_info:
+        vlan_tool.main(["--plan", str(bad_plan), "--inventory", ARGS[3]])
+
+    assert exit_info.value.code == 1
+    out = capsys.readouterr().out
+    assert "Plan refused:" in out
+    assert "  - VLAN 99 is the management VLAN and must not be in the plan" in out
+    assert switches == {}                        # ConnectHandler never called
+    assert not os.path.exists(tmp_path / "backups")
+    assert not os.path.exists(tmp_path / "reports")   # today: no report for a refused plan
+    assert "Plan refused:" in read_log(tmp_path)
 
 
 # ---------- Step 2: pre-check ----------
@@ -930,6 +954,31 @@ def test_report_precheck_failure(switches, monkeypatch, tmp_path):
     assert "cannot reach 192.168.99.13" in report["switches"][2]["error_lines"][0]
     assert report["stop_reason"] == "pre-check failed"
     assert report["dry_run"] is False
+
+
+def test_report_unsafe_switch_state(switches, monkeypatch, tmp_path, capsys):
+    """SW2's uplink is not a trunk: step 4 stops in apply mode with exit 1,
+    nothing is sent to any switch, and the report says why."""
+    monkeypatch.setitem(SAMPLES, "192.168.99.12",
+                        ("sw2_show_vlan_brief_baseline.txt", "sw1_show_interfaces_trunk_baseline.txt"))
+    with pytest.raises(SystemExit) as exit_info:
+        vlan_tool.main(ARGS)
+
+    assert exit_info.value.code == 1
+    assert "Stopped, nothing was changed: SW2 GigabitEthernet0/0 is not an active trunk" in capsys.readouterr().out
+    for fake in switches.values():
+        assert fake.config_sent == [] and fake.flash_sent == []
+        assert fake.disconnected
+    report = read_report(tmp_path)
+    assert report["stop_reason"] == ("unsafe switch state: SW2 GigabitEthernet0/0 is not an active trunk;"
+                                     " the tool does not change trunk mode")
+    assert statuses_in(report) == [("SW%d" % n, "NOT_RUN") for n in range(1, 6)]
+    sw1, sw2, sw3 = report["switches"][0], report["switches"][1], report["switches"][2]
+    assert sw1["planned_commands"] != [] and sw1["backup_file"].endswith(".cfg")
+    # SW2 was backed up, then planning stopped, so it has no plan; SW3 was never read.
+    assert sw2["backup_file"].endswith(".cfg")
+    assert sw2["planned_commands"] == [] and sw2["undo_list"] == []
+    assert sw3["backup_file"] is None
 
 
 def test_report_dry_run(switches, tmp_path, capsys):
