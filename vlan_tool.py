@@ -93,6 +93,35 @@ def ask_credentials():
     return username, password
 
 
+def start_log(started, dry_run, plan_file):
+    """Pick this run's name and start logs/run_<name>.log. Returns the name."""
+    global LOG_PATH   # say() writes every progress line to this run's log
+    timestamp = new_run_name(started)
+    os.makedirs(LOG_DIR, exist_ok=True)
+    LOG_PATH = os.path.join(LOG_DIR, f"run_{timestamp}.log")
+    say(f"Run {timestamp}: {'dry-run' if dry_run else 'apply'}, plan {plan_file}")
+    return timestamp
+
+
+# ---------- Step 1: read the files ----------
+
+def read_files(inventory_path, plan_path):
+    """Load both YAML files and refuse an unsafe plan (exit code 1, no report).
+
+    Returns (inventory, plan).
+    """
+    inventory = load_yaml(inventory_path)
+    plan = load_yaml(plan_path)
+    errors = validate_plan(plan, inventory)
+    if errors:
+        say("Plan refused:")
+        for error in errors:
+            say("  - " + error)
+        sys.exit(1)
+    say(f"Plan OK: {len(plan['vlans'])} VLANs, {len(plan['switches'])} switches")
+    return inventory, plan
+
+
 # ---------- Step 2: pre-check ----------
 
 def connect_all(inventory, username, password):
@@ -133,6 +162,26 @@ def disconnect_all(connections):
         connection.disconnect()
 
 
+def precheck(inventory, records):
+    """Step 2: ask for the login, then SSH to every switch.
+
+    Returns (connections, reachable). reachable is False if any switch failed;
+    those switches are marked UNREACHABLE and every connection is already closed.
+    """
+    username, password = ask_credentials()
+    connections, errors = connect_all(inventory, username, password)
+    if errors:
+        say("Pre-check FAILED, nothing was changed:")
+        for switch, reason in errors.items():
+            say(f"  - {switch}: {reason}")
+            records[switch]["status"] = "UNREACHABLE"
+            records[switch]["error_lines"].append(reason)
+        disconnect_all(connections)
+        return connections, False
+    say(f"Pre-check OK: all {len(connections)} switches reachable over SSH")
+    return connections, True
+
+
 # ---------- Step 3: backup ----------
 
 def backup_switch(switch, connection, ports, timestamp):
@@ -164,6 +213,36 @@ def plan_switch(switch, connection, plan, port_configs):
     return build_changes(switch, plan, current_vlans, current_trunks, port_configs)
 
 
+def backup_and_plan_all(plan, connections, records, timestamp):
+    """Steps 3 and 4 for every switch, in plan order, before anything is changed.
+
+    Returns (changes, unsafe_state):
+        changes:      {switch: (commands, undo_list)}
+        unsafe_state: None, or the reason a switch cannot be changed safely
+    """
+    changes = {}
+    for switch in plan["switches"]:
+        connection = connections[switch]
+        settings = plan["switches"][switch] or {}
+        access_ports = list((settings.get("access") or {}).keys())
+        begin = time.monotonic()
+
+        # Step 3: backup to a local file (the flash copy happens in apply, step 6).
+        backup_path, port_configs = backup_switch(switch, connection, access_ports, timestamp)
+        say(f"{switch}: backup saved to {backup_path}")
+        records[switch]["backup_file"] = backup_path
+
+        # Step 4: build the change list. ValueError = unsafe switch state.
+        try:
+            changes[switch] = plan_switch(switch, connection, plan, port_configs)
+        except ValueError as error:
+            say(f"Stopped, nothing was changed: {error}")
+            return changes, str(error)
+        records[switch]["planned_commands"], records[switch]["undo_list"] = changes[switch]
+        records[switch]["seconds"] = round(time.monotonic() - begin, 2)
+    return changes, None
+
+
 # ---------- Step 5: dry-run output ----------
 
 def print_changes(switch, commands, undo):
@@ -177,6 +256,13 @@ def print_changes(switch, commands, undo):
     say("Undo list (runs only if verification fails):")
     for line in undo:
         say("  " + line)
+
+
+def end_dry_run(changes, records):
+    """Dry run ends after step 5: nothing was sent, so every switch is NOT_CHANGED."""
+    say("\nDry run: nothing was sent to the switches.")
+    for switch in changes:
+        records[switch]["status"] = "NOT_CHANGED"
 
 
 # ---------- Step 6: apply ----------
@@ -519,6 +605,27 @@ def run_switch(conn, switch_name, plan, commands, undo_commands, record):
     return "ROLLBACK_INCOMPLETE"
 
 
+def run_all_switches(changes, connections, plan, records):
+    """Steps 6 to 8 for each switch in plan order (SW1, SW2, SW3, SW4, SW5).
+
+    Stops at the first switch that is not SAVED, so the remaining switches
+    are never touched. Switches already saved stay saved.
+    Returns (statuses, stop_reason).
+    """
+    statuses = {}
+    stop_reason = "completed"
+    for switch in changes:
+        commands, undo = changes[switch]
+        begin = time.monotonic()
+        statuses[switch] = run_switch(connections[switch], switch, plan, commands, undo, records[switch])
+        records[switch]["status"] = statuses[switch]
+        records[switch]["seconds"] = round(records[switch]["seconds"] + time.monotonic() - begin, 2)
+        if statuses[switch] != "SAVED":
+            stop_reason = f"stopped at {switch} ({statuses[switch]})"
+            break
+    return statuses, stop_reason
+
+
 def print_summary(switch_names, statuses):
     """One line per group: saved, rolled back, untouched, needs attention."""
     saved = []
@@ -575,6 +682,14 @@ def new_record(name, ip):
     }
 
 
+def make_records(inventory):
+    """One report.json entry per switch, in inventory order."""
+    records = {}
+    for switch, details in inventory.items():
+        records[switch] = new_record(switch, details["host"])
+    return records
+
+
 def write_report(timestamp, started, dry_run, plan_file, stop_reason, records):
     """Step 9: save reports/report_<timestamp>.json (evidence for Chapter 4).
 
@@ -599,96 +714,41 @@ def write_report(timestamp, started, dry_run, plan_file, stop_reason, records):
 
 
 def main(argv=None):
-    global LOG_PATH   # say() writes every progress line to this run's log
     args = parse_args(argv)
     started = datetime.now()
-    timestamp = new_run_name(started)
-    os.makedirs(LOG_DIR, exist_ok=True)
-    LOG_PATH = os.path.join(LOG_DIR, f"run_{timestamp}.log")
-    say(f"Run {timestamp}: {'dry-run' if args.dry_run else 'apply'}, plan {args.plan}")
+    timestamp = start_log(started, args.dry_run, args.plan)
 
-    # Step 1: read the files and refuse an unsafe plan.
-    inventory = load_yaml(args.inventory)
-    plan = load_yaml(args.plan)
-    errors = validate_plan(plan, inventory)
-    if errors:
-        say("Plan refused:")
-        for error in errors:
-            say("  - " + error)
-        sys.exit(1)
-    say(f"Plan OK: {len(plan['vlans'])} VLANs, {len(plan['switches'])} switches")
+    # Step 1: a plan that breaks a safety rule (e.g. VLAN 99 or SW1 Gi1/0 in it) stops here, before any SSH.
+    inventory, plan = read_files(args.inventory, args.plan)
+    records = make_records(inventory)
 
-    # One report.json entry per switch, in inventory order.
-    records = {}
-    for switch, details in inventory.items():
-        records[switch] = new_record(switch, details["host"])
-
-    # Step 2: pre-check. If any switch fails, stop before changing anything.
-    username, password = ask_credentials()
-    connections, errors = connect_all(inventory, username, password)
-    if errors:
-        say("Pre-check FAILED, nothing was changed:")
-        for switch, reason in errors.items():
-            say(f"  - {switch}: {reason}")
-            records[switch]["status"] = "UNREACHABLE"
-            records[switch]["error_lines"].append(reason)
-        disconnect_all(connections)
+    # Step 2: if any switch fails, stop before changing anything (TC10).
+    connections, reachable = precheck(inventory, records)
+    if not reachable:
         write_report(timestamp, started, args.dry_run, args.plan, "pre-check failed", records)
         sys.exit(1)
-    say(f"Pre-check OK: all {len(connections)} switches reachable over SSH")
 
     # Step 9 runs in 'finally', so every ending below writes a report.
     stop_reason = "unexpected error (see the log)"
     try:
-        changes = {}
-        # Processing order follows plan.yaml: SW1, SW2, SW3, SW4, SW5.
-        for switch in plan["switches"]:
-            connection = connections[switch]
-            settings = plan["switches"][switch] or {}
-            access_ports = list((settings.get("access") or {}).keys())
-            begin = time.monotonic()
+        # Steps 3 and 4 run on ALL switches before any change, so a switch in an
+        # unsafe state stops the run while every switch is still untouched.
+        changes, unsafe_state = backup_and_plan_all(plan, connections, records, timestamp)
+        if unsafe_state is not None:
+            stop_reason = f"unsafe switch state: {unsafe_state}"
+            sys.exit(1)
 
-            # Step 3: backup to a local file (the flash copy happens in apply, step 6).
-            backup_path, port_configs = backup_switch(switch, connection, access_ports, timestamp)
-            say(f"{switch}: backup saved to {backup_path}")
-            records[switch]["backup_file"] = backup_path
-
-            # Step 4: build the change list. ValueError = unsafe switch state.
-            try:
-                changes[switch] = plan_switch(switch, connection, plan, port_configs)
-            except ValueError as error:
-                say(f"Stopped, nothing was changed: {error}")
-                stop_reason = f"unsafe switch state: {error}"
-                sys.exit(1)
-            records[switch]["planned_commands"], records[switch]["undo_list"] = changes[switch]
-            records[switch]["seconds"] = round(time.monotonic() - begin, 2)
-
-        # Step 5: print commands and undo list per switch.
+        # Step 5: always print the plan, so it is on screen and in the log in both modes.
         for switch, (commands, undo) in changes.items():
             print_changes(switch, commands, undo)
-
         if args.dry_run:
-            say("\nDry run: nothing was sent to the switches.")
-            for switch in changes:
-                records[switch]["status"] = "NOT_CHANGED"
+            end_dry_run(changes, records)
             stop_reason = "dry run"
             return
 
-        # Steps 6 to 8: apply, verify, save or roll back, one switch at a
-        # time in plan order. Stop at the first switch that is not saved, so
-        # the remaining switches are never touched. Saved switches stay saved.
-        statuses = {}
-        stop_reason = "completed"
-        for switch in changes:
-            commands, undo = changes[switch]
-            begin = time.monotonic()
-            statuses[switch] = run_switch(connections[switch], switch, plan, commands, undo, records[switch])
-            records[switch]["status"] = statuses[switch]
-            records[switch]["seconds"] = round(records[switch]["seconds"] + time.monotonic() - begin, 2)
-            if statuses[switch] != "SAVED":
-                stop_reason = f"stopped at {switch} ({statuses[switch]})"
-                break
-
+        # Steps 6 to 8, one switch at a time. Stop at the first switch not saved,
+        # so the rest are never touched and the saved ones stay saved.
+        statuses, stop_reason = run_all_switches(changes, connections, plan, records)
         print_summary(list(changes), statuses)
         for status in statuses.values():
             if status != "SAVED":
