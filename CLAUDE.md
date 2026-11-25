@@ -4,7 +4,7 @@ Read this file before writing or changing any code in this repository.
 
 ## What this project is
 
-A university group project (ITT633, FSKM, UiTM Shah Alam, semester September 2026 to January 2027, lecturer Kamarul Ariffin bin Abdul Basit). Group of 4 students (see the Team table in README.md). The group leader is Muhammad Afiq bin Khairul Anuar; the other roles are not decided yet, so do not assign names to tasks. Record each member's work in CONTRIBUTIONS.md.
+A university group project (ITT633, FSKM, UiTM Shah Alam, semester September 2026 to January 2027, lecturer Kamarul Ariffin bin Abdul Basit). Group of 4 students (see the Team table in README.md). Roles: Muhammad Afiq bin Khairul Anuar (group leader), Ahmad Farhan bin Ahmad Zahir (developer), Alya Sophea binti Shahrul Munir (lab owner), Nur Ain Nasuha binti Abdul Fatah (documentation). Record each member's work in CONTRIBUTIONS.md.
 
 The project builds a Python tool that deploys VLAN configuration to five Cisco switches from one YAML file, verifies the result against the file, saves only when every check passes, and rolls back its own changes when a check fails.
 
@@ -24,7 +24,7 @@ Scenario: Perdana Niaga Sdn. Bhd., an imaginary retail company with a three-stor
 
 - Development: the user writes code on an **Apple Silicon Mac** and shares it with the group through Git/GitHub. Check arm64 compatibility before suggesting any tool.
 - Lab: GNS3 (2.2.x) with the GNS3 VM, running on a Windows PC or the faculty lab computers. Cisco x86 images do not run well on Apple Silicon.
-- **Paan does not run GNS3.** A friend runs the lab and sends back saved output, screenshots or error messages. Paan then adds them to the repo or pastes them into the session. Anything that needs the lab (running the tool, show commands, pings, test-case evidence) goes through that friend.
+- **Paan does not run GNS3.** Sophea (the lab owner) runs the lab and sends back saved output, screenshots or error messages. Paan then adds them to the repo or pastes them into the session. Anything that needs the lab (running the tool, show commands, pings, test-case evidence) goes through Sophea.
 - Switch image: Cisco **IOSvL2 15.2** in GNS3 (replaced IOL-L2; manual baseline confirmed working 24 Oct 2026; tool dry-run passed on it 4 Nov; first real apply 5 Nov and TC09 rollback 6 Nov passed). Interface names are `GigabitEthernet0/0`, `GigabitEthernet0/1`, and so on (short form `Gi0/x` in show output). Old IOL-L2 names map as e0/0->Gi0/0, e0/1->Gi0/1, e0/2->Gi0/2, e0/3->Gi0/3, e1/0->Gi1/0. If the image changes again, only plan.yaml and `PROTECTED_PORTS` in planning.py should need to change.
 - End hosts: VPCS. The automation host is a **Kali Linux VM** (192.168.99.101) joined to VLAN 99 through a GNS3 Cloud node on SW1 Gi1/0 (decided 3 Nov 2026; replaces the earlier Windows host and .100). SSH from Kali to all 5 switches works (tool pre-check, 4 Nov).
 - **The manual baseline was verified on real IOSvL2 (24 Oct). The Python tool has run on the real switches: dry-run (4 Nov), apply with flash copy, verify and write memory on all 5 (`run_20261105_235328.log`), and the TC09 rollback on SW3 (`run_20261106_014041.log`).** Only claim what a real log or capture shows; any new or changed code is untested on the switches until the lab runs it. Say what still needs testing in GNS3.
@@ -219,9 +219,11 @@ This code will be explained live to a lecturer by any of 4 students.
 - When a step needs the lab, write a short, numbered instruction sheet that Paan can forward to the friend. It should give the exact commands to run on each switch or on the automation host, and say what to save and how to name each file (for example `sw1_show_vlan_brief_real.txt`). Do not assume Paan can run or check anything in GNS3 directly.
 - Commit and push only when Paan asks. When asked to see the diff first, stage the changes, show the diff, and wait before committing.
 
-## Current status (handoff, last updated 7 Nov 2026)
+## Current status (handoff, last updated 25 Nov 2026)
 
 Read this section first in a new session. `git log` has the full history.
+
+**Project complete.** Code frozen at commit `2ade97f` (13 Nov 2026). All 11 test cases (TC01 to TC11) passed on the real IOSvL2 lab with that commit between 14 and 22 Nov 2026 (evidence in the project report, Chapter 4; TC11: SW3 manual 181.85 s vs tool 41.63 s average, 0 errors). The repository is public so the lecturer can access it (report Appendix B). Only documentation changes after `2ade97f`. The notes below are the development history.
 
 ### Lab result 5 to 6 Nov 2026: first real apply and TC09 PASSED (Phase 3)
 
@@ -297,13 +299,13 @@ Run from Kali on the 5 IOSvL2 switches. Logs (frozen samples, tested) are in `te
 
 1. Done 4 Nov: SSH from Kali (TC01), first dry-run (TC02), flash copy capture, SW2 Gi0/1 config capture.
 2. Done 5 to 6 Nov: flash copy wait confirmed, first real run (all 5 SAVED), SW1/SW2 after-captures, TC09 (SW3 ROLLED_BACK).
-3. Still to collect as evidence (week 7): TC03 to TC05 on SW3 to SW5, TC06/TC07 pings, TC08 (report.json vs show output), TC10 (wrong SW3 IP), TC11 (timings). Not reported back from the lab yet.
+3. Done 14 to 22 Nov: all test cases TC01 to TC11 run on commit 2ade97f, all passed.
 
 ### Simplicity pass (branch `simplicity-pass`, items in order)
 
 Rule for every item: no change in behaviour. That means the same commands in the same order, the same report.json, log lines, CLI and exit codes. Lock any untested path with a test first, committed on its own.
 
-1. Done 7 Nov: split `main()` (was about 94 lines, now about 33) into the step helpers listed under "Done". It was a pure move except for the Ctrl-C `stop_reason` (see step 9 above). Checked by 159 pytest tests (Python 3.9) and by a one-off before/after script. That script ran the old and new main() through 7 endings with fake switches (dry-run, full pass, rollback stop, pre-check fail, unsafe state, plan refused, unexpected error) and compared stdout, log, report.json, backup names and every command each fake switch received, with times blanked. Result: 0 differences. **Not yet run on the switches:** one `--dry-run` from Kali before the 11 Nov freeze.
+1. Done 7 Nov: split `main()` (was about 94 lines, now about 33) into the step helpers listed under "Done". It was a pure move except for the Ctrl-C `stop_reason` (see step 9 above). Checked by 159 pytest tests (Python 3.9) and by a one-off before/after script. That script ran the old and new main() through 7 endings with fake switches (dry-run, full pass, rollback stop, pre-check fail, unsafe state, plan refused, unexpected error) and compared stdout, log, report.json, backup names and every command each fake switch received, with times blanked. Result: 0 differences. Ran on the switches in Week 7: every test case TC01 to TC11 used this code.
 2. Next items: not listed yet (agree them with Paan). CONTRIBUTIONS.md gets one row when the whole pass is done.
 
 ### Still unverified or assumed
