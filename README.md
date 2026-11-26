@@ -58,7 +58,9 @@ cd itt633-vlan-automation
 
 ## 2. Set up Python
 
-Needs Python 3.9 or newer (tested on 3.9 and 3.14). Open a terminal in the project folder.
+Needs Python 3.9 to 3.14 (tests passed on 3.9, 3.13 and 3.14). On Windows, use
+Python 3.13: with Python 3.15, PyYAML 6.0.3 does not install without the
+Microsoft C++ Build Tools. Open a terminal in the project folder.
 
 Linux or macOS (including the Kali automation host):
 
@@ -71,10 +73,13 @@ pip install -r requirements.txt
 Windows (Command Prompt):
 
 ```bat
-py -m venv .venv
+py -3.13 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+If `py -3.13` is not found, install it with `py install 3.13`, or download
+Python 3.13 from python.org and tick "Add python.exe to PATH".
 
 On Kali, always use the venv: Kali refuses `pip install` outside one
 ("externally-managed-environment"). If `python3 -m venv` fails, run
